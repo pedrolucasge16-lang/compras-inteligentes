@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/banco_local.dart';
 import '../domain/dinheiro.dart';
 import '../domain/item_compra.dart';
+import 'leitura_etiqueta.dart';
 
 const _laranja = Color(0xFFFF6D00);
 
@@ -360,19 +361,44 @@ class _TelaInicialState extends State<TelaInicial> {
                         ),
                       )
                     : ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 96),
+                        padding: const EdgeInsets.only(bottom: 170),
                         itemCount: _itens.length,
                         itemBuilder: (ctx, i) => _linha(_itens[i]),
                       ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _adicionar,
-        backgroundColor: _laranja,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add),
-        label: const Text('Adicionar manualmente'),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'ler',
+            onPressed: () async {
+              final novo = await lerEtiquetaDaCamera(context, _itens);
+              if (novo == null) return;
+              final id = await _banco.inserirItem(novo);
+              await _carregar();
+              _mostrarDesfazer('Produto adicionado.', () async {
+                await _banco.removerItem(id);
+                await _carregar();
+              });
+            },
+            backgroundColor: _laranja,
+            foregroundColor: Colors.white,
+            icon: const Icon(Icons.photo_camera),
+            label: const Text('Ler etiqueta'),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.extended(
+            heroTag: 'manual',
+            onPressed: _adicionar,
+            backgroundColor: Colors.white,
+            foregroundColor: _laranja,
+            icon: const Icon(Icons.add),
+            label: const Text('Adicionar manualmente'),
+          ),
+        ],
       ),
     );
   }
