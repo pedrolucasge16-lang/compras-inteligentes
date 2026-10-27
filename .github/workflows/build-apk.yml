@@ -1,8 +1,9 @@
-name: Build APK
+
+name: Build APK - Diagnostico OCR
 
 on:
   push:
-    branches: ["main", "master"]
+    branches: ["main", "master", "diagnostico-ocr"]
   workflow_dispatch:
 
 permissions:
@@ -11,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,24 +23,37 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate a clean Android project
+      - name: Generate Android project
         run: |
           rm -rf android
-          flutter create --platforms=android --project-name compras_inteligentes --org com.pedrolucas .
+          flutter create \
+            --platforms=android \
+            --project-name compras_inteligentes \
+            --org com.pedrolucas .
+
           rm -f test/widget_test.dart
+
           cat > android/app/proguard-rules.pro <<'EOF'
           -dontwarn com.google.mlkit.vision.text.chinese.**
           -dontwarn com.google.mlkit.vision.text.devanagari.**
           -dontwarn com.google.mlkit.vision.text.japanese.**
           -dontwarn com.google.mlkit.vision.text.korean.**
           EOF
+
           python3 - <<'PY'
           from pathlib import Path
-          manifest = Path('android/app/src/main/AndroidManifest.xml')
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
           content = manifest.read_text()
-          permissions = '''    <uses-permission android:name="android.permission.CAMERA" />\n'''
-          if 'android.permission.CAMERA' not in content:
-              content = content.replace('<application', permissions + '    <application', 1)
+          permission = '    <uses-permission android:name="android.permission.CAMERA" />\n'
+
+          if "android.permission.CAMERA" not in content:
+              content = content.replace(
+                  "<application",
+                  permission + "    <application",
+                  1
+              )
+
           manifest.write_text(content)
           PY
 
@@ -46,8 +61,11 @@ jobs:
         run: flutter pub get
 
       - name: Format Dart code
-        run: dart format lib test && git diff --check
-        
+        run: dart format lib test
+
+      - name: Check formatting changes
+        run: git diff --check
+
       - name: Analyze Dart code
         run: flutter analyze --no-pub --no-fatal-infos
 
@@ -55,12 +73,31 @@ jobs:
         run: flutter test
 
       - name: Build release APK
-        run: flutter build apk --release --no-shrink
+        run: flutter build apk --release
 
-      - name: Upload APK artifact
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: compras-inteligentes-apk
+          name: compras-inteligentes-release
           path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload R8 mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: r8-mapping
+          path: android/app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: compras-inteligentes-debug
+          path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 14
