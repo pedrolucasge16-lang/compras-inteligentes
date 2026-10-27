@@ -25,6 +25,7 @@ jobs:
         run: |
           rm -rf android
           flutter create --platforms=android --project-name compras_inteligentes --org com.pedrolucas .
+          rm -f test/widget_test.dart
           python3 - <<'PY'
           from pathlib import Path
           manifest = Path('android/app/src/main/AndroidManifest.xml')
