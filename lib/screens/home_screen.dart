@@ -84,7 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 12),
         TextField(controller: controller, autofocus: true,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Preço real por unidade (R$)')),
+          decoration: const InputDecoration(labelText: 'Preço real por unidade (R\$)')),
       ]),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),

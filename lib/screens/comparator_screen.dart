@@ -60,7 +60,7 @@ class _ComparatorScreenState extends State<ComparatorScreen> {
           Expanded(child: DropdownButtonFormField<String>(value: unit, decoration: const InputDecoration(labelText: 'Unidade'),
             items: const ['g', 'kg', 'ml', 'l', 'un'].map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(), onChanged: onUnitChanged)),
         ]),
-        field(priceController, 'Preço da embalagem (R$)', keyboard: const TextInputType.numberWithOptions(decimal: true)),
+        field(priceController, 'Preço da embalagem (R\$)', keyboard: const TextInputType.numberWithOptions(decimal: true)),
       ]);
 
     return Scaffold(
@@ -69,7 +69,7 @@ class _ComparatorScreenState extends State<ComparatorScreen> {
         const Text('Quanto vou gastar?', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const Text('Informe o preço de uma unidade para calcular o custo de 2, 5, 10 e 20 unidades.'),
         const SizedBox(height: 12),
-        field(price, 'Preço de uma unidade (R$)', keyboard: const TextInputType.numberWithOptions(decimal: true)),
+        field(price, 'Preço de uma unidade (R\$)', keyboard: const TextInputType.numberWithOptions(decimal: true)),
         ...[2, 5, 10, 20].asMap().entries.map((e) => Card(child: ListTile(
           title: Text('${[2, 5, 10, 20][e.key]} unidades'),
           trailing: Text(formatCents(costs[e.key]), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
