@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'ui/tela_inicial.dart';
+
 void main() {
   runApp(const ComprasApp());
 }
@@ -13,17 +15,10 @@ class ComprasApp extends StatelessWidget {
       title: 'Compras Inteligentes',
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFFF6D00)),
         scaffoldBackgroundColor: Colors.white,
       ),
-      home: const Scaffold(
-        body: Center(
-          child: Text(
-            'Compras Inteligentes',
-            style: TextStyle(fontSize: 24),
-          ),
-        ),
-      ),
+      home: const TelaInicial(),
     );
   }
 }
