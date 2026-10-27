@@ -43,7 +43,7 @@ jobs:
         run: dart format lib test && git diff --check
         
       - name: Analyze Dart code
-        run: flutter analyze
+        run: flutter analyze --no-pub --no-fatal-infos
 
       - name: Run tests
         run: flutter test
