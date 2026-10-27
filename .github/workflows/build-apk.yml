@@ -26,6 +26,12 @@ jobs:
           rm -rf android
           flutter create --platforms=android --project-name compras_inteligentes --org com.pedrolucas .
           rm -f test/widget_test.dart
+          cat > android/app/proguard-rules.pro <<'EOF'
+          -dontwarn com.google.mlkit.vision.text.chinese.**
+          -dontwarn com.google.mlkit.vision.text.devanagari.**
+          -dontwarn com.google.mlkit.vision.text.japanese.**
+          -dontwarn com.google.mlkit.vision.text.korean.**
+          EOF
           python3 - <<'PY'
           from pathlib import Path
           manifest = Path('android/app/src/main/AndroidManifest.xml')
