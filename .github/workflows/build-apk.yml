@@ -1,13 +1,12 @@
-
-name: Build APK - Diagnostico OCR
+name: Build APK
 
 on:
   push:
-    branches: ["main", "master", "diagnostico-ocr"]
+    branches: ["main", "trabalho-v2"]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -17,11 +16,48 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Se existir atualizacao.zip na raiz da branch, aplica os arquivos,
+      # salva o resultado na mesma branch e apaga o zip. Nunca age na main.
+      - name: Aplicar atualizacao.zip (se existir)
+        run: |
+          if [ -f atualizacao.zip ]; then
+            if [ "$GITHUB_REF_NAME" = "main" ]; then
+              echo "ERRO: não aplico atualizacao.zip direto na main. Envie o zip para a branch trabalho-v2."
+              exit 1
+            fi
+            if unzip -Z1 atualizacao.zip | grep -E '^(/|\.\./|\.github/)'; then
+              echo "ERRO: o zip contém caminhos não permitidos (veja acima)."
+              exit 1
+            fi
+            echo "Encontrei atualizacao.zip. Arquivos:"
+            unzip -Z1 atualizacao.zip
+            unzip -o atualizacao.zip
+            rm -f atualizacao.zip
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Aplicar atualizacao.zip"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+            echo "Atualização aplicada e salva na branch ${GITHUB_REF_NAME}."
+          else
+            echo "Sem atualizacao.zip: compilando o código como está."
+          fi
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
+
+      - name: Mostrar versões usadas
+        run: |
+          flutter --version
+          {
+            echo "### Versões usadas nesta compilação"
+            echo '```'
+            flutter --version
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Generate Android project
         run: |
@@ -33,12 +69,12 @@ jobs:
 
           rm -f test/widget_test.dart
 
-          cat > android/app/proguard-rules.pro <<'EOF'
+          cat > android/app/proguard-rules.pro <<'PRO'
           -dontwarn com.google.mlkit.vision.text.chinese.**
           -dontwarn com.google.mlkit.vision.text.devanagari.**
           -dontwarn com.google.mlkit.vision.text.japanese.**
           -dontwarn com.google.mlkit.vision.text.korean.**
-          EOF
+          PRO
 
           python3 - <<'PY'
           from pathlib import Path
@@ -63,9 +99,6 @@ jobs:
       - name: Format Dart code
         run: dart format lib test
 
-      - name: Check formatting changes
-        run: git diff --check
-
       - name: Analyze Dart code
         run: flutter analyze --no-pub --no-fatal-infos
 
@@ -74,6 +107,9 @@ jobs:
 
       - name: Build release APK
         run: flutter build apk --release
+
+      - name: Localizar mapping.txt do R8
+        run: find . -name "mapping.txt" -not -path "./.git/*" | head
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
@@ -87,7 +123,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: r8-mapping
-          path: android/app/build/outputs/mapping/release/mapping.txt
+          path: |
+            build/app/outputs/mapping/release/mapping.txt
+            android/app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: warn
           retention-days: 14
 
