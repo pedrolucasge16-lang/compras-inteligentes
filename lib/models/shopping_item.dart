@@ -1,3 +1,5 @@
+import 'category.dart';
+
 class ShoppingItem {
   const ShoppingItem({
     this.id,
@@ -10,6 +12,8 @@ class ShoppingItem {
     this.originalItemId,
     this.originalItemName,
     this.actualUnitPriceCents,
+    this.category = ProductCategory.outros,
+    this.boughtQuantity = 0.0,
   });
 
   final int? id;
@@ -22,8 +26,23 @@ class ShoppingItem {
   final int? originalItemId;
   final String? originalItemName;
   final int? actualUnitPriceCents;
+  final String category;
+  final double boughtQuantity;
 
-  int get subtotalCents => ((actualUnitPriceCents ?? unitPriceCents) * quantity).round();
+  int get effectiveUnitPriceCents => actualUnitPriceCents ?? unitPriceCents;
+  int get subtotalCents => (effectiveUnitPriceCents * quantity).round();
+  int get boughtSubtotalCents =>
+      (effectiveUnitPriceCents * (isFullyBought ? quantity : boughtQuantity)).round();
+
+  double get remainingQuantity {
+    final diff = quantity - boughtQuantity;
+    if (diff <= 0.0001) return 0.0;
+    return (diff * 1000).round() / 1000;
+  }
+
+  bool get isFullyBought => isBought || remainingQuantity == 0.0;
+  bool get isPartiallyBought => !isFullyBought && boughtQuantity > 0.0001;
+  bool get isPending => !isFullyBought;
 
   Map<String, Object?> toMap() => {
     'id': id,
@@ -36,6 +55,8 @@ class ShoppingItem {
     'original_item_id': originalItemId,
     'original_item_name': originalItemName,
     'actual_unit_price_cents': actualUnitPriceCents,
+    'category': category,
+    'bought_quantity': boughtQuantity,
   };
 
   factory ShoppingItem.fromMap(Map<String, Object?> map) => ShoppingItem(
@@ -49,6 +70,9 @@ class ShoppingItem {
     originalItemId: map['original_item_id'] as int?,
     originalItemName: map['original_item_name'] as String?,
     actualUnitPriceCents: (map['actual_unit_price_cents'] as num?)?.toInt(),
+    category: (map['category'] as String?) ?? ProductCategory.outros,
+    boughtQuantity: (map['bought_quantity'] as num?)?.toDouble() ??
+        ((map['is_bought'] as int? ?? 0) == 1 ? (map['quantity'] as num).toDouble() : 0.0),
   );
 
   ShoppingItem copyWith({
@@ -62,6 +86,8 @@ class ShoppingItem {
     int? originalItemId,
     String? originalItemName,
     int? actualUnitPriceCents,
+    String? category,
+    double? boughtQuantity,
     bool clearReplacement = false,
     bool clearActualPrice = false,
   }) => ShoppingItem(
@@ -75,5 +101,7 @@ class ShoppingItem {
     originalItemId: originalItemId ?? this.originalItemId,
     originalItemName: originalItemName ?? this.originalItemName,
     actualUnitPriceCents: clearActualPrice ? null : (actualUnitPriceCents ?? this.actualUnitPriceCents),
+    category: category ?? this.category,
+    boughtQuantity: boughtQuantity ?? this.boughtQuantity,
   );
 }

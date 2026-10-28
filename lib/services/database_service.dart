@@ -10,28 +10,48 @@ class DatabaseService {
   Future<Database> get database async {
     if (_db != null) return _db!;
     final path = p.join(await getDatabasesPath(), 'compras_inteligentes.db');
-    _db = await openDatabase(path, version: 2,
+    _db = await openDatabase(
+      path,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''CREATE TABLE shopping_items (
-          id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
-          quantity REAL NOT NULL, unit TEXT NOT NULL,
-          unit_price_cents INTEGER NOT NULL, is_bought INTEGER NOT NULL DEFAULT 0,
-          replaced_by TEXT, original_item_id INTEGER, original_item_name TEXT,
-          actual_unit_price_cents INTEGER)''');
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          quantity REAL NOT NULL,
+          unit TEXT NOT NULL,
+          unit_price_cents INTEGER NOT NULL,
+          is_bought INTEGER NOT NULL DEFAULT 0,
+          replaced_by TEXT,
+          original_item_id INTEGER,
+          original_item_name TEXT,
+          actual_unit_price_cents INTEGER,
+          category TEXT NOT NULL DEFAULT 'Outros',
+          bought_quantity REAL NOT NULL DEFAULT 0.0)''');
         await db.execute('''CREATE TABLE purchases (
-          id INTEGER PRIMARY KEY AUTOINCREMENT, purchased_at TEXT NOT NULL,
-          total_cents INTEGER NOT NULL, items_count INTEGER NOT NULL)''');
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          purchased_at TEXT NOT NULL,
+          total_cents INTEGER NOT NULL,
+          items_count INTEGER NOT NULL)''');
         await db.execute('''CREATE TABLE purchase_items (
-          id INTEGER PRIMARY KEY AUTOINCREMENT, purchase_id INTEGER NOT NULL,
-          name TEXT NOT NULL, quantity REAL NOT NULL, unit TEXT NOT NULL,
-          unit_price_cents INTEGER NOT NULL, subtotal_cents INTEGER NOT NULL,
-          replaced_from TEXT, FOREIGN KEY(purchase_id) REFERENCES purchases(id) ON DELETE CASCADE)''');
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          purchase_id INTEGER NOT NULL,
+          name TEXT NOT NULL,
+          quantity REAL NOT NULL,
+          unit TEXT NOT NULL,
+          unit_price_cents INTEGER NOT NULL,
+          subtotal_cents INTEGER NOT NULL,
+          replaced_from TEXT,
+          FOREIGN KEY(purchase_id) REFERENCES purchases(id) ON DELETE CASCADE)''');
         await db.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
         await db.insert('settings', {'key': 'budget_cents', 'value': '0'});
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE shopping_items ADD COLUMN original_item_name TEXT');
+        }
+        if (oldVersion < 3) {
+          await db.execute("ALTER TABLE shopping_items ADD COLUMN category TEXT NOT NULL DEFAULT 'Outros'");
+          await db.execute("ALTER TABLE shopping_items ADD COLUMN bought_quantity REAL NOT NULL DEFAULT 0.0");
         }
       },
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
@@ -56,7 +76,7 @@ class DatabaseService {
 
   Future<void> setBudget(int cents) async {
     await (await database).insert('settings', {'key': 'budget_cents', 'value': '$cents'},
-      conflictAlgorithm: ConflictAlgorithm.replace);
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<int> getBudget() async {
@@ -64,34 +84,58 @@ class DatabaseService {
     return rows.isEmpty ? 0 : int.tryParse(rows.first['value'] as String) ?? 0;
   }
 
-  /// Saves only checked, active items. Unchecked items stay in the current list.
+  /// Salva itens comprados ou parcialmente comprados no histórico.
+  /// Itens totalmente concluídos são removidos da lista.
+  /// Itens parcialmente comprados têm a porção comprada arquivada e o restante permanece na lista.
   Future<int> finishPurchase() async {
     final db = await database;
     final all = await getItems();
-    final bought = all.where((i) => i.replacedBy == null && i.isBought).toList();
-    if (bought.isEmpty) throw StateError('Marque pelo menos um produto como comprado.');
+    final active = all.where((i) => i.replacedBy == null).toList();
+    final boughtOrPartial = active.where((i) => i.isFullyBought || i.isPartiallyBought).toList();
+    if (boughtOrPartial.isEmpty) {
+      throw StateError('Marque pelo menos um produto como comprado.');
+    }
     final purchaseId = await db.transaction((txn) async {
-      final total = bought.fold<int>(0, (sum, item) => sum + item.subtotalCents);
+      final total = boughtOrPartial.fold<int>(0, (sum, item) => sum + item.boughtSubtotalCents);
       final id = await txn.insert('purchases', {
         'purchased_at': DateTime.now().toIso8601String(),
         'total_cents': total,
-        'items_count': bought.length,
+        'items_count': boughtOrPartial.length,
       });
-      for (final item in bought) {
+      for (final item in boughtOrPartial) {
+        final qtyBought = item.isFullyBought ? item.quantity : item.boughtQuantity;
+        final subtotal = ((item.actualUnitPriceCents ?? item.unitPriceCents) * qtyBought).round();
         await txn.insert('purchase_items', {
           'purchase_id': id,
           'name': item.name,
-          'quantity': item.quantity,
+          'quantity': qtyBought,
           'unit': item.unit,
           'unit_price_cents': item.actualUnitPriceCents ?? item.unitPriceCents,
-          'subtotal_cents': item.subtotalCents,
+          'subtotal_cents': subtotal,
           'replaced_from': item.originalItemName,
         });
+
         if (item.id != null) {
-          await txn.delete('shopping_items', where: 'id = ?', whereArgs: [item.id]);
+          if (item.isFullyBought) {
+            await txn.delete('shopping_items', where: 'id = ?', whereArgs: [item.id]);
+          } else {
+            // Permanece na lista apenas o que falta comprar
+            final remaining = item.remainingQuantity;
+            await txn.update(
+              'shopping_items',
+              {
+                'quantity': remaining,
+                'bought_quantity': 0.0,
+                'is_bought': 0,
+                'actual_unit_price_cents': null,
+              },
+              where: 'id = ?',
+              whereArgs: [item.id],
+            );
+          }
         }
       }
-      // Remove only obsolete rows representing products that were replaced.
+      // Remove produtos que foram substituídos durante a compra
       await txn.delete('shopping_items', where: 'replaced_by IS NOT NULL');
       return id;
     });
@@ -99,11 +143,16 @@ class DatabaseService {
   }
 
   Future<List<Map<String, Object?>>> getPurchasesSince(DateTime since) async =>
-      (await database).query('purchases', where: 'purchased_at >= ?',
-        whereArgs: [since.toIso8601String()], orderBy: 'purchased_at DESC');
+      (await database).query('purchases',
+          where: 'purchased_at >= ?',
+          whereArgs: [since.toIso8601String()],
+          orderBy: 'purchased_at DESC');
 
   Future<List<Map<String, Object?>>> getPurchaseItems(int purchaseId) async =>
-      (await database).query('purchase_items', where: 'purchase_id = ?', whereArgs: [purchaseId], orderBy: 'id');
+      (await database).query('purchase_items',
+          where: 'purchase_id = ?',
+          whereArgs: [purchaseId],
+          orderBy: 'id');
 
   Future<int> getSpendSince(DateTime since) async {
     final rows = await getPurchasesSince(since);
@@ -113,9 +162,9 @@ class DatabaseService {
   Future<List<Map<String, Object?>>> getPriceHistory(String productName) async {
     final db = await database;
     return db.rawQuery('''SELECT pi.name, pi.unit, pi.quantity, pi.unit_price_cents,
-      pi.subtotal_cents, p.purchased_at FROM purchase_items pi
-      INNER JOIN purchases p ON p.id = pi.purchase_id
-      WHERE lower(trim(pi.name)) = lower(trim(?))
-      ORDER BY p.purchased_at DESC''', [productName]);
+p.subtotal_cents, p.purchased_at FROM purchase_items pi
+INNER JOIN purchases p ON p.id = pi.purchase_id
+WHERE lower(trim(pi.name)) = lower(trim(?))
+ORDER BY p.purchased_at DESC''', [productName]);
   }
 }

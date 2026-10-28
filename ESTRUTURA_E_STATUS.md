@@ -1,29 +1,22 @@
-# Estrutura e status desta entrega
+# Estrutura e status do projeto Compras Inteligentes
 
-## Incluído
-- Lista local com SQLite: adicionar, editar, excluir, marcar comprado/pendente.
-- Orçamento persistido e saldo/alerta visual.
+## Funcionalidades Incluídas
+- Lista local com SQLite persistente: adicionar, editar, excluir, marcar comprado/pendente e compras parciais.
+- Categorização de produtos nas 11 categorias solicitadas (Carnes, Frutas e verduras, Laticínios, Cereais, Massas, Bebidas, Padaria, Higiene pessoal, Limpeza, Congelados, Outros).
+- Orçamento persistido e saldo/alerta visual de limite de gastos.
 - Troca de produto com registro do item antigo como substituído.
-- OCR local via ML Kit: captura por câmera e sugestão de nome/preço para revisão.
-- Finalização transacional da compra e registro de itens.
-- Histórico dos últimos 30 dias e detalhe dos itens.
-- Comparador de 2, 5, 10 e 20 unidades.
-- Comparação de embalagens por massa, volume e unidade.
-- Testes unitários para moeda e comparador.
-- Workflow GitHub Actions para análise, testes e APK.
+- OCR local via Google ML Kit: captura por câmera e extração heurística de nome e preço brasileiro.
+- Reconhecimento Inteligente de Produtos: compara a leitura da câmera contra a lista ativa cadastrada, tratando correspondências de alta confiança, ambiguidades com múltiplos produtos similares e opções manuais quando o produto não for encontrado.
+- Tratamento cuidadoso de preços: preserva valores com vírgulas e pontos e nunca força R$ 0,00 silenciosamente.
+- Nova Aba "Faltam Comprar": lista prática agrupada por categorias com contador de progresso por itens distintos (ex: 8 de 20 comprados = 40%) e suporte a itens pendentes/parciais.
+- Nova Aba "Próximo Item": assistente passo a passo que guia o usuário pelo supermercado seguindo a ordem fixa de categorias, pulando categorias vazias e concluídas, com destaque visual e confirmação rápida.
+- Finalização transacional da compra: arquiva itens concluídos e frações compradas no histórico e preserva os itens pendentes na lista ativa.
+- Histórico dos últimos 30 dias com detalhamento de compras.
+- Comparador de 2, 5, 10 e 20 unidades e embalagens por massa, volume e unidade.
+- Testes unitários para regras de moeda, parser de preços, passos de quantidade, modelo ShoppingItem, categorias e casamento de produtos por OCR.
+- Workflow GitHub Actions automatizado para análise, testes e compilação do APK de Release.
 
-## Pendências conhecidas para uma versão de produção
-- Histórico de preço por produto e comparação automática com compras anteriores ainda precisa de uma camada de catálogo/consulta dedicada.
-- A tela ainda não implementa reaproveitamento de itens de compras anteriores.
-- A função de registrar preço real está disponível como campo de preço unitário no cadastro, mas ainda pode ser melhorada com um fluxo explícito de confirmação de preço real.
-- OCR de nome/preço é heurístico; precisa ser validado com fotos reais.
-- A substituição preserva o item original na lista como marcado substituído; o relatório de compra armazena a observação genérica "substituição", e pode ser refinado para registrar nome original e substituto de forma estruturada.
-- Testes de integração SQLite e migrações futuras ainda precisam ser adicionados.
-- Este ambiente de geração de arquivos não executou Flutter nem compilou o APK. A primeira execução do workflow será a evidência da compilação real.
-
-## Etapa 2 (branch trabalho-v2)
-- Histórico: corrigido o erro `LocaleDataException` (datas em pt_BR inicializadas no `main.dart`).
-- OCR: leitor de preço separado em `lib/services/price_parser.dart` (testável sem celular). Ignora código de barras, peso, validade e tabela nutricional; mostra vários preços para escolha; mostra o texto lido na revisão.
-- Lista: botões [−] e [+] em cada produto (1 em 1 para unidade, 0,5 para kg/L, 100 para g/ml), nunca chega a zero, salva no SQLite.
-- Workflow: aplica `atualizacao.zip` na branch de trabalho, mostra a versão do Flutter e guarda o `mapping.txt` do R8.
-- Ainda não feito: várias listas de compras e migração do banco (Etapa 3).
+## Histórico de Versões do Banco SQLite
+- Versão 1: Estrutura inicial (shopping_items, purchases, purchase_items, settings).
+- Versão 2: Adição de `original_item_id`, `original_item_name` e `actual_unit_price_cents`.
+- Versão 3: Migração segura via `ALTER TABLE` adicionando `category` (com padrão 'Outros') e `bought_quantity` (com padrão 0.0), preservando todos os dados anteriores sem perda de histórico.
