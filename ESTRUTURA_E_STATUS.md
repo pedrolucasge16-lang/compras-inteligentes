@@ -20,3 +20,10 @@
 - A substituição preserva o item original na lista como marcado substituído; o relatório de compra armazena a observação genérica "substituição", e pode ser refinado para registrar nome original e substituto de forma estruturada.
 - Testes de integração SQLite e migrações futuras ainda precisam ser adicionados.
 - Este ambiente de geração de arquivos não executou Flutter nem compilou o APK. A primeira execução do workflow será a evidência da compilação real.
+
+## Etapa 2 (branch trabalho-v2)
+- Histórico: corrigido o erro `LocaleDataException` (datas em pt_BR inicializadas no `main.dart`).
+- OCR: leitor de preço separado em `lib/services/price_parser.dart` (testável sem celular). Ignora código de barras, peso, validade e tabela nutricional; mostra vários preços para escolha; mostra o texto lido na revisão.
+- Lista: botões [−] e [+] em cada produto (1 em 1 para unidade, 0,5 para kg/L, 100 para g/ml), nunca chega a zero, salva no SQLite.
+- Workflow: aplica `atualizacao.zip` na branch de trabalho, mostra a versão do Flutter e guarda o `mapping.txt` do R8.
+- Ainda não feito: várias listas de compras e migração do banco (Etapa 3).

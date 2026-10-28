@@ -1,31 +1,35 @@
+import 'dart:io';
+
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
-class OcrSuggestion {
-  const OcrSuggestion({required this.text, this.productName, this.priceCents});
-  final String text;
-  final String? productName;
-  final int? priceCents;
-}
+import 'price_parser.dart';
+
+export 'price_parser.dart' show OcrSuggestion;
 
 class OcrService {
+  /// Lê a foto e sugere nome e preço. A interpretação do texto fica em
+  /// `price_parser.dart` (testável sem celular).
   static Future<OcrSuggestion> readImage(String path) async {
+    final file = File(path);
+    if (!await file.exists() || await file.length() == 0) {
+      throw StateError('A foto não foi encontrada ou está vazia. Tire a foto de novo.');
+    }
     final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
     try {
       final result = await recognizer.processImage(InputImage.fromFilePath(path));
-      final text = result.text;
-      // Accepts examples such as 8,99, R$ 8.99 and 1.234,56.
-      final priceMatch = RegExp(r'(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*|\d+)[,.](\d{2})\b').firstMatch(text);
-      int? cents;
-      if (priceMatch != null) {
-        final whole = priceMatch.group(1)!.replaceAll('.', '');
-        cents = int.parse(whole) * 100 + int.parse(priceMatch.group(2)!);
+      final lines = <OcrLine>[];
+      for (final block in result.blocks) {
+        for (final line in block.lines) {
+          final text = line.text.trim();
+          if (text.isNotEmpty) lines.add(OcrLine(text, line.boundingBox.height));
+        }
       }
-      final lines = text.split('\n').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
-      final nameCandidates = lines.where((line) =>
-        !RegExp(r'R\$|\d+[,.]\d{2}').hasMatch(line) &&
-        !RegExp(r'^\d+$').hasMatch(line) && line.length > 2).toList();
-      final name = nameCandidates.isEmpty ? null : nameCandidates.first;
-      return OcrSuggestion(text: text, productName: name, priceCents: cents);
+      if (lines.isEmpty) {
+        for (final text in result.text.split('\n')) {
+          if (text.trim().isNotEmpty) lines.add(OcrLine(text.trim()));
+        }
+      }
+      return analyzeLines(lines);
     } finally {
       await recognizer.close();
     }

@@ -9,6 +9,17 @@ void main() {
     expect(formatCents(899), 'R\$ 8,99');
   });
 
+  test('interpreta formatos brasileiros de preço', () {
+    expect(parseMoneyToCents('16,00'), 1600);
+    expect(parseMoneyToCents('R\$16,00'), 1600);
+    expect(parseMoneyToCents('R\$ 16,00'), 1600);
+    expect(parseMoneyToCents('1.234,56'), 123456);
+    expect(parseMoneyToCents('1.234'), 123400);
+    expect(parseMoneyToCents('16'), 1600);
+    expect(parseMoneyToCents('16.5'), 1650);
+    expect(parseMoneyToCents('abc'), 0);
+  });
+
   test('calcula 2, 5, 10 e 20 unidades', () {
     expect(quantitiesCost(450), [900, 2250, 4500, 9000]);
   });

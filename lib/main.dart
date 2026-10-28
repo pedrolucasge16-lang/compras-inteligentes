@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'screens/home_screen.dart';
 import 'services/database_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Sem isto o histórico quebra com "Locale data has not been initialized".
+  Intl.defaultLocale = 'pt_BR';
+  await initializeDateFormatting('pt_BR');
   await DatabaseService.instance.database;
   runApp(const ComprasInteligentesApp());
 }
@@ -14,7 +18,6 @@ class ComprasInteligentesApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Intl.defaultLocale = 'pt_BR';
     return MaterialApp(
       title: 'Compras Inteligentes',
       debugShowCheckedModeBanner: false,

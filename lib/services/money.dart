@@ -10,7 +10,10 @@ String formatCents(int cents) {
 
 int parseMoneyToCents(String value) {
   var normalized = value.trim().replaceAll('R\$', '').replaceAll(' ', '');
-  if (normalized.contains(',') && normalized.contains('.')) {
+  if (!normalized.contains(',') && RegExp(r'^\d{1,3}(\.\d{3})+$').hasMatch(normalized)) {
+    // "1.234" no Brasil é mil duzentos e trinta e quatro reais.
+    normalized = normalized.replaceAll('.', '');
+  } else if (normalized.contains(',') && normalized.contains('.')) {
     normalized = normalized.replaceAll('.', '').replaceAll(',', '.');
   } else if (normalized.contains(',')) {
     normalized = normalized.replaceAll(',', '.');

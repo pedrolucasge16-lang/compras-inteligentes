@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/shopping_item.dart';
 import '../services/database_service.dart';
 import '../services/money.dart';
 import '../services/ocr_service.dart';
+import '../services/quantity.dart';
 import 'history_screen.dart';
 import 'comparator_screen.dart';
 
@@ -35,12 +37,34 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _editItem([ShoppingItem? old, OcrSuggestion? suggestion]) async {
     final name = TextEditingController(text: suggestion?.productName ?? old?.name ?? '');
-    final qty = TextEditingController(text: (old?.quantity ?? 1).toString().replaceAll('.', ','));
+    final qty = TextEditingController(text: formatQuantity(old?.quantity ?? 1));
     final price = TextEditingController(text: centsToInput(suggestion?.priceCents ?? old?.unitPriceCents ?? 0));
     String unit = old?.unit ?? 'un';
     final result = await showDialog<ShoppingItem>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => AlertDialog(
       title: Text(old == null ? 'Adicionar produto' : 'Editar produto'),
-      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (suggestion != null) ...[
+          if (suggestion.priceCents == null)
+            const Text('Nenhum preço encontrado na foto. Digite o preço manualmente.',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600))
+          else if (suggestion.ambiguous)
+            const Text('Encontrei mais de um preço. Toque no correto:',
+              style: TextStyle(fontWeight: FontWeight.w600))
+          else
+            const Text('Confira o nome e o preço lidos antes de salvar.'),
+          if (suggestion.candidates.length > 1) ...[
+            const SizedBox(height: 6),
+            Wrap(spacing: 8, children: [
+              for (final c in suggestion.candidates)
+                ActionChip(label: Text(formatCents(c)), onPressed: () => setD(() => price.text = centsToInput(c))),
+            ]),
+          ],
+          const SizedBox(height: 6),
+          Text('Texto lido: ${suggestion.text.replaceAll('\n', ' | ')}',
+            maxLines: 4, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          const SizedBox(height: 12),
+        ],
         TextField(controller: name, decoration: const InputDecoration(labelText: 'Nome do produto')),
         const SizedBox(height: 10),
         TextField(controller: qty, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Quantidade')),
@@ -66,6 +90,17 @@ class _HomeScreenState extends State<HomeScreen> {
       ],
     )));
     if (result != null) { await db.saveItem(result); await _load(); }
+  }
+
+  Future<void> _changeQuantity(ShoppingItem item, int direction) async {
+    if (item.replacedBy != null) return; // produto substituído não muda
+    final next = nextQuantity(item.quantity, item.unit, direction);
+    if (next == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('A quantidade precisa ser maior que zero.')));
+      return;
+    }
+    await db.saveItem(item.copyWith(quantity: next));
+    await _load();
   }
 
   Future<void> _toggleBought(ShoppingItem item, bool bought) async {
@@ -132,9 +167,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _scan() async {
+    XFile? image;
     try {
-      final image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 85);
-      if (image == null) return;
+      image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 85);
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      final denied = e.code.contains('denied');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(denied
+          ? 'Sem permissão da câmera. Ative em Configurações > Apps > Compras Inteligentes > Permissões.'
+          : 'Não foi possível abrir a câmera: ${e.message ?? e.code}')));
+      return;
+    }
+    if (image == null) return; // usuário cancelou a câmera
+    try {
       final suggestion = await OcrService.readImage(image.path);
       if (!mounted) return;
       if (suggestion.text.trim().isEmpty) {
@@ -204,8 +249,32 @@ class _HomeScreenState extends State<HomeScreen> {
           return Card(
             child: ListTile(
               leading: replaced ? const Icon(Icons.swap_horiz, color: Colors.orange) : Checkbox(value: item.isBought, onChanged: (v) => _toggleBought(item, v ?? false)),
+              isThreeLine: !replaced,
               title: Text(item.name, style: TextStyle(decoration: replaced ? TextDecoration.lineThrough : null, color: replaced ? Colors.grey : null)),
-              subtitle: Text(replaced ? 'Substituído por ${item.replacedBy}' : '${item.quantity} ${item.unit} × ${formatCents(item.actualUnitPriceCents ?? item.unitPriceCents)} = ${formatCents(item.subtotalCents)}${item.isBought ? '\nPreço confirmado' : '\nPreço estimado'}'),
+              subtitle: replaced
+                  ? Text('Substituído por ${item.replacedBy}')
+                  : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Preço unitário: ${formatCents(item.actualUnitPriceCents ?? item.unitPriceCents)}${item.isBought ? ' (confirmado)' : ' (estimado)'}'),
+                      Text('Subtotal: ${formatCents(item.subtotalCents)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
+                        IconButton.filledTonal(
+                          tooltip: 'Diminuir quantidade',
+                          iconSize: 26,
+                          onPressed: nextQuantity(item.quantity, item.unit, -1) == null ? null : () => _changeQuantity(item, -1),
+                          icon: const Icon(Icons.remove),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text('${formatQuantity(item.quantity)} ${item.unit}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        ),
+                        IconButton.filledTonal(
+                          tooltip: 'Aumentar quantidade',
+                          iconSize: 26,
+                          onPressed: () => _changeQuantity(item, 1),
+                          icon: const Icon(Icons.add),
+                        ),
+                      ]),
+                    ]),
               trailing: replaced ? null : PopupMenuButton<String>(onSelected: (v) async {
                 if (v == 'edit') await _editItem(item);
                 if (v == 'replace') await _replace(item);

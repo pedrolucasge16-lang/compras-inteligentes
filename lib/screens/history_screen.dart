@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../models/shopping_item.dart';
 import '../services/database_service.dart';
 import '../services/money.dart';
+import '../services/quantity.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -36,11 +37,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
         final date = DateTime.tryParse(p['purchased_at'] as String) ?? DateTime.now();
         return Card(child: ListTile(
           leading: const Icon(Icons.receipt_long),
-          title: Text(formatCents(p['total_cents'] as int)),
+          title: Text(formatCents((p['total_cents'] as num).toInt())),
           subtitle: Text('${DateFormat('dd/MM/yyyy HH:mm').format(date)} • ${p['items_count']} produtos'),
           trailing: const Icon(Icons.chevron_right),
           onTap: () async {
-            final id = p['id'] as int;
+            final id = (p['id'] as num).toInt();
             final rows = await db.getPurchaseItems(id);
             if (!context.mounted) return;
             showDialog<void>(context: context, builder: (ctx) => AlertDialog(
@@ -48,7 +49,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               content: SizedBox(width: double.maxFinite, child: ListView(shrinkWrap: true, children: rows.map((item) =>
                 ListTile(
                   title: Text(item['name'] as String),
-                  subtitle: Text('${item['quantity']} ${item['unit']} × ${formatCents(item['unit_price_cents'] as int)}${item['replaced_from'] == null ? '' : '\nSubstituiu: ${item['replaced_from']}'}\nToque para comparar com compras anteriores'),
+                  subtitle: Text('${formatQuantity((item['quantity'] as num).toDouble())} ${item['unit']} × ${formatCents((item['unit_price_cents'] as num).toInt())}${item['replaced_from'] == null ? '' : '\nSubstituiu: ${item['replaced_from']}'}\nToque para comparar com compras anteriores'),
                   trailing: IconButton(
                     tooltip: 'Adicionar novamente à lista',
                     icon: const Icon(Icons.add_shopping_cart),
@@ -75,7 +76,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             final d = DateTime.tryParse(h['purchased_at'] as String) ?? DateTime.now();
                             return ListTile(
                               title: Text(formatCents((h['unit_price_cents'] as num).toInt()) + ' por ${h['unit']}'),
-                              subtitle: Text(DateFormat('dd/MM/yyyy').format(d) + ' • ${h['quantity']} ${h['unit']}'),
+                              subtitle: Text(DateFormat('dd/MM/yyyy').format(d) + ' • ${formatQuantity((h['quantity'] as num).toDouble())} ${h['unit']}'),
                               trailing: Text(formatCents((h['subtotal_cents'] as num).toInt())),
                             );
                           }).toList())),
