@@ -9,6 +9,7 @@ import '../services/ocr_service.dart';
 import '../services/product_matcher.dart';
 import '../services/quantity.dart';
 import 'history_screen.dart';
+import 'create_list_screen.dart';
 import 'comparator_screen.dart';
 import 'tabs/next_item_tab.dart';
 import 'tabs/pending_tab.dart';
@@ -931,6 +932,17 @@ class _HomeScreenState extends State<HomeScreen> {
             onFinishPurchase: _finish,
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        tooltip: 'Criar lista de compras',
+        onPressed: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const CreateListScreen()),
+          );
+          await _load();
+        },
+        child: const Icon(Icons.add),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentTabIndex,
