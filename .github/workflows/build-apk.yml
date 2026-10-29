@@ -139,3 +139,15 @@ jobs:
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Preparar arquivo APK para amigos
+        run: cp build/app/outputs/flutter-apk/app-release.apk compras-inteligentes.apk
+
+      - name: Publicar Link Direto no GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0-latest
+          name: "Compras Inteligentes - Baixar Aplicativo"
+          body: "Toque em **compras-inteligentes.apk** abaixo para baixar e instalar no Android."
+          files: compras-inteligentes.apk
+          make_latest: true
