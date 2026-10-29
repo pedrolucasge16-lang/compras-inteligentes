@@ -1,8 +1,6 @@
 # Estrutura e status do projeto Compras Inteligentes
 
 ## Funcionalidades Incluídas
-- Tela "Criar lista por seção" para cadastrar produtos agrupados por categoria sem exigir preço no cadastro; o preço real pode ser informado na confirmação da compra.
-- Botão flutuante (+) na tela principal abre a tela de criação de lista e atualiza a lista ao retornar.
 - Lista local com SQLite persistente: adicionar, editar, excluir, marcar comprado/pendente e compras parciais.
 - Categorização de produtos nas 11 categorias solicitadas (Carnes, Frutas e verduras, Laticínios, Cereais, Massas, Bebidas, Padaria, Higiene pessoal, Limpeza, Congelados, Outros).
 - Orçamento persistido e saldo/alerta visual de limite de gastos.

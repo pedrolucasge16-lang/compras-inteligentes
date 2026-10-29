@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import '../models/category.dart';
 import '../models/shopping_item.dart';
 import '../services/database_service.dart';
+import '../services/quantity.dart';
 
-/// Permite preparar uma lista por seção do mercado sem exigir preço antecipado.
-/// O preço real poderá ser informado quando o produto for comprado.
 class CreateListScreen extends StatefulWidget {
   const CreateListScreen({super.key});
 
@@ -13,168 +12,357 @@ class CreateListScreen extends StatefulWidget {
 }
 
 class _CreateListScreenState extends State<CreateListScreen> {
-  final _nameController = TextEditingController();
-  final List<ShoppingItem> _draftItems = [];
-  String _category = ProductCategory.carnes;
-  bool _saving = false;
+  final db = DatabaseService.instance;
+  final TextEditingController _nameController = TextEditingController();
+  final FocusNode _nameFocus = FocusNode();
+
+  List<ShoppingItem> items = [];
+  bool loading = true;
+
+  String _detectedCategory = ProductCategory.outros;
+  String? _manualCategoryOverride;
+  double _quantity = 1.0;
+  String _unit = 'un';
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController.addListener(_onNameChanged);
+    _load();
+  }
 
   @override
   void dispose() {
+    _nameController.removeListener(_onNameChanged);
     _nameController.dispose();
+    _nameFocus.dispose();
     super.dispose();
   }
 
-  void _addItem() {
-    final name = _nameController.text.trim();
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Digite o nome do produto.')),
-      );
-      return;
+  void _onNameChanged() {
+    final text = _nameController.text;
+    final autoCat = ProductCategory.detectCategory(text);
+    final effectiveCat = _manualCategoryOverride ?? autoCat;
+    final autoUnit = ProductCategory.suggestUnit(text, effectiveCat);
+    if (mounted) {
+      setState(() {
+        _detectedCategory = effectiveCat;
+        if (_manualCategoryOverride == null) {
+          _unit = autoUnit;
+        }
+      });
     }
+  }
+
+  Future<void> _load() async {
+    final data = await db.getItems();
+    if (!mounted) return;
     setState(() {
-      _draftItems.add(ShoppingItem(
-        name: name,
-        quantity: 1,
-        unit: 'un',
-        unitPriceCents: 0,
-        category: _category,
-      ));
-      _nameController.clear();
+      items = data;
+      loading = false;
     });
   }
 
-  Future<void> _saveList() async {
-    if (_draftItems.isEmpty || _saving) return;
-    setState(() => _saving = true);
-    try {
-      final db = DatabaseService.instance;
-      for (final item in _draftItems) {
-        await db.saveItem(item);
-      }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${_draftItems.length} produto(s) adicionados à lista.')),
-      );
-      Navigator.pop(context, true);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Não foi possível salvar a lista. Tente novamente.')),
-      );
+  Future<void> _addItem() async {
+    final text = _nameController.text.trim();
+    if (text.isEmpty) return;
+
+    final categoryToSave = _manualCategoryOverride ?? ProductCategory.detectCategory(text);
+
+    final newItem = ShoppingItem(
+      name: text,
+      quantity: _quantity > 0 ? _quantity : 1.0,
+      unit: _unit,
+      unitPriceCents: 0,
+      category: categoryToSave,
+    );
+
+    await db.saveItem(newItem);
+    _nameController.clear();
+    setState(() {
+      _manualCategoryOverride = null;
+      _detectedCategory = ProductCategory.outros;
+      _quantity = 1.0;
+      _unit = 'un';
+    });
+    await _load();
+    _nameFocus.requestFocus();
+  }
+
+  Future<void> _deleteItem(int id) async {
+    await db.deleteItem(id);
+    await _load();
+  }
+
+  void _changeQty(int dir) {
+    final step = quantityStep(_unit);
+    final next = ((_quantity + dir * step) * 1000).round() / 1000;
+    if (next > 0) {
+      setState(() => _quantity = next);
+    }
+  }
+
+  Future<void> _pickCategoryOverride() async {
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'Mudar setor manualmente',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+            for (final cat in ProductCategory.all)
+              ListTile(
+                leading: Icon(ProductCategory.iconFor(cat), color: ProductCategory.colorFor(cat)),
+                title: Text(cat),
+                onTap: () => Navigator.pop(ctx, cat),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen != null) {
+      setState(() {
+        _manualCategoryOverride = chosen;
+        _detectedCategory = chosen;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final grouped = <String, List<ShoppingItem>>{};
-    for (final item in _draftItems) {
-      grouped.putIfAbsent(item.category, () => []).add(item);
-    }
+    final active = items.where((i) => i.replacedBy == null && !i.isFullyBought).toList();
+    final catColor = ProductCategory.colorFor(_detectedCategory);
+    final catIcon = ProductCategory.iconFor(_detectedCategory);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Criar lista por seção')),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _nameController,
-                    textCapitalization: TextCapitalization.sentences,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (_) => _addItem(),
-                    decoration: const InputDecoration(
-                      labelText: 'Nome do produto',
-                      hintText: 'Ex.: peito de frango',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: _category,
-                    decoration: const InputDecoration(
-                      labelText: 'Seção do mercado',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: ProductCategory.all
-                        .map((category) => DropdownMenuItem(
-                              value: category,
-                              child: Text(category),
-                            ))
-                        .toList(),
-                    onChanged: (value) {
-                      if (value != null) setState(() => _category = value);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _addItem,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Adicionar produto'),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Não precisa informar o preço agora. Você poderá registrar o valor na hora da compra.',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                ],
-              ),
+      appBar: AppBar(
+        title: const Text('Adicionar à Lista'),
+        actions: [
+          TextButton.icon(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.check, color: Colors.white),
+            label: const Text(
+              'Concluir',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
             ),
-            const Divider(height: 1),
-            Expanded(
-              child: _draftItems.isEmpty
-                  ? const Center(child: Text('Adicione produtos para montar sua lista.'))
-                  : ListView(
-                      padding: const EdgeInsets.all(12),
+          ),
+        ],
+      ),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                // Painel de Adição Rápida (1 campo só, categoria automática!)
+                Card(
+                  margin: const EdgeInsets.all(16),
+                  elevation: 3,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (final category in ProductCategory.all)
-                          if (grouped.containsKey(category)) ...[
-                            Padding(
-                              padding: const EdgeInsets.only(top: 8, bottom: 4),
-                              child: Text(
-                                category,
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                              ),
-                            ),
-                            for (final item in grouped[category]!)
-                              Card(
-                                child: ListTile(
-                                  leading: Icon(ProductCategory.iconFor(category)),
-                                  title: Text(item.name),
-                                  subtitle: const Text('Quantidade: 1 • Preço a informar na compra'),
-                                  trailing: IconButton(
-                                    tooltip: 'Remover produto',
-                                    icon: const Icon(Icons.delete_outline),
-                                    onPressed: () => setState(() => _draftItems.remove(item)),
+                        TextField(
+                          controller: _nameController,
+                          focusNode: _nameFocus,
+                          autofocus: true,
+                          textCapitalization: TextCapitalization.sentences,
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _addItem(),
+                          decoration: InputDecoration(
+                            labelText: 'O que você vai comprar?',
+                            hintText: 'Ex: Frango, Sabão, Leite, Arroz...',
+                            prefixIcon: const Icon(Icons.edit),
+                            suffixIcon: _nameController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () => _nameController.clear(),
+                                  )
+                                : null,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Linha que mostra a categoria detectada automaticamente + quantidade
+                        Row(
+                          children: [
+                            // Badge do setor identificado sozinho
+                            Expanded(
+                              child: InkWell(
+                                onTap: _pickCategoryOverride,
+                                borderRadius: BorderRadius.circular(10),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    color: catColor.withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: catColor.withOpacity(0.4)),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(catIcon, size: 18, color: catColor),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          'Setor: $_detectedCategory',
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.bold,
+                                            color: catColor,
+                                          ),
+                                        ),
+                                      ),
+                                      Icon(Icons.edit_outlined, size: 14, color: catColor),
+                                    ],
                                   ),
                                 ),
                               ),
+                            ),
+                            const SizedBox(width: 8),
+
+                            // Botões simples de quantidade (-) 1 (+)
+                            IconButton.filledTonal(
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () => _changeQty(-1),
+                              icon: const Icon(Icons.remove, size: 18),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                              child: Text(
+                                '${formatQuantity(_quantity)} $_unit',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                              ),
+                            ),
+                            IconButton.filledTonal(
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () => _changeQty(1),
+                              icon: const Icon(Icons.add, size: 18),
+                            ),
                           ],
+                        ),
+                        const SizedBox(height: 14),
+
+                        // Botão Grande Adicionar
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            onPressed: _addItem,
+                            icon: const Icon(Icons.add_circle_outline),
+                            label: const Text(
+                              'Adicionar na Lista',
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: _draftItems.isEmpty || _saving ? null : _saveList,
-                  child: Text(_saving ? 'Salvando...' : 'Salvar lista (${_draftItems.length})'),
+                  ),
                 ),
-              ),
+
+                // Lista dos itens já anotados (organizados automaticamente por setor)
+                Expanded(
+                  child: active.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              'Digite o nome do produto acima (ex: "Frango" ou "Sabão").\nO aplicativo coloca no setor certo automaticamente!',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+                            ),
+                          ),
+                        )
+                      : ListView(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text(
+                                'Itens na sua lista (${active.length}):',
+                                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black54),
+                              ),
+                            ),
+                            for (final cat in ProductCategory.all) ...[
+                              if (active.any((i) => i.category == cat)) ...[
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 10, bottom: 4),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        ProductCategory.iconFor(cat),
+                                        size: 16,
+                                        color: ProductCategory.colorFor(cat),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        cat,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: ProductCategory.colorFor(cat),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 6,
+                                  children: [
+                                    for (final item in active.where((i) => i.category == cat))
+                                      Chip(
+                                        backgroundColor: ProductCategory.colorFor(cat).withOpacity(0.1),
+                                        label: Text(
+                                          '${item.name} (${formatQuantity(item.quantity)} ${item.unit})',
+                                          style: const TextStyle(fontWeight: FontWeight.w600),
+                                        ),
+                                        deleteIcon: const Icon(Icons.close, size: 16),
+                                        onDeleted: item.id == null ? null : () => _deleteItem(item.id!),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                            const SizedBox(height: 24),
+                          ],
+                        ),
+                ),
+
+                // Botão Inferior para voltar para a Tela Inicial
+                SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(Icons.arrow_back),
+                        label: const Text(
+                          'Pronto! Ir para a Página Inicial',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
     );
   }
 }
