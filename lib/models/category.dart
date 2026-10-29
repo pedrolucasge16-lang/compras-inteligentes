@@ -139,7 +139,7 @@ class ProductCategory {
             return entry.key;
           }
           // Se é palavra simples, confere se está entre as palavras ou é prefixo
-          if (words.any((w) => w == normKw || (normKw.length >= 4 && w.startsWith(normKw)))) {
+          if (words.any((w) => w == normKw || w == '${normKw}s' || w == '${normKw}es')) {
             return entry.key;
           }
         }
