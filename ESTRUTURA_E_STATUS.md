@@ -1,22 +1,30 @@
 # Estrutura e status do projeto Compras Inteligentes
 
-## Funcionalidades Incluídas
-- Lista local com SQLite persistente: adicionar, editar, excluir, marcar comprado/pendente e compras parciais.
-- Categorização de produtos nas 11 categorias solicitadas (Carnes, Frutas e verduras, Laticínios, Cereais, Massas, Bebidas, Padaria, Higiene pessoal, Limpeza, Congelados, Outros).
-- Orçamento persistido e saldo/alerta visual de limite de gastos.
-- Troca de produto com registro do item antigo como substituído.
-- OCR local via Google ML Kit: captura por câmera e extração heurística de nome e preço brasileiro.
-- Reconhecimento Inteligente de Produtos: compara a leitura da câmera contra a lista ativa cadastrada, tratando correspondências de alta confiança, ambiguidades com múltiplos produtos similares e opções manuais quando o produto não for encontrado.
-- Tratamento cuidadoso de preços: preserva valores com vírgulas e pontos e nunca força R$ 0,00 silenciosamente.
-- Nova Aba "Faltam Comprar": lista prática agrupada por categorias com contador de progresso por itens distintos (ex: 8 de 20 comprados = 40%) e suporte a itens pendentes/parciais.
-- Nova Aba "Próximo Item": assistente passo a passo que guia o usuário pelo supermercado seguindo a ordem fixa de categorias, pulando categorias vazias e concluídas, com destaque visual e confirmação rápida.
-- Finalização transacional da compra: arquiva itens concluídos e frações compradas no histórico e preserva os itens pendentes na lista ativa.
-- Histórico dos últimos 30 dias com detalhamento de compras.
-- Comparador de 2, 5, 10 e 20 unidades e embalagens por massa, volume e unidade.
-- Testes unitários para regras de moeda, parser de preços, passos de quantidade, modelo ShoppingItem, categorias e casamento de produtos por OCR.
-- Workflow GitHub Actions automatizado para análise, testes e compilação do APK de Release.
+## Redesign Visual e Identidade (Etapa 4)
+- **Fotografia oficial integrada**: `assets/images/supermarket_banner.jpg` configurada em `pubspec.yaml` e exibida na tela principal em banner horizontal (~23% da altura da tela) com `BoxFit.cover` e gradiente suave para máxima legibilidade do título "Compras Inteligentes" e ícones de ação.
+- **Paleta de cores centralizada (`lib/theme/app_theme.dart`)**:
+  - Verde-escuro principal: `#245C46`
+  - Verde de destaque: `#387653`
+  - Verde-claro: `#E7F0E6`
+  - Creme de fundo: `#FAF7F0`
+  - Branco de cartões: `#FFFFFF`
+  - Madeira clara: `#D8B895`
+  - Laranja suave: `#E99A52`
+  - Texto principal: `#292D2A`
+  - Texto secundário: `#747A75`
+  - Bordas discretas: `#E5E0D7`
+  - Vermelho de alerta: `#C94C4C`
+- **Cartão de Resumo Financeiro em 2 colunas**:
+  - Coluna esquerda: Total da lista em destaque, orçamento com acesso rápido e barra de progresso percentual.
+  - Coluna direita: Valores Comprado e Pendente, mais indicadores de itens concluídos e pendentes.
+- **Telas Padronizadas**:
+  - `HomeScreen` (Minha Lista) com filtros rápidos de categorias, barra "Selecionar tudo (Select All)", cartões brancos com controle cápsula de quantidade `[-] 1 kg [+]` e botão de câmera para preço no próprio item.
+  - `CreateListScreen` (Adicionar à Lista) com fundo creme, campos brancos, seletor de categoria verde-claro suave com detecção automática e cadastro no banco de setores.
+  - `PendingTab` (Faltam Comprar), `NextItemTab` (Próximo Item), `HistoryScreen` (Histórico de Compras) e diálogo de `Orçamento da Lista` padronizados.
 
-## Histórico de Versões do Banco SQLite
-- Versão 1: Estrutura inicial (shopping_items, purchases, purchase_items, settings).
-- Versão 2: Adição de `original_item_id`, `original_item_name` e `actual_unit_price_cents`.
-- Versão 3: Migração segura via `ALTER TABLE` adicionando `category` (com padrão 'Outros') e `bought_quantity` (com padrão 0.0), preservando todos os dados anteriores sem perda de histórico.
+## Funcionalidades Preservadas
+- Lista local com SQLite persistente: adicionar, editar, excluir, marcar comprado/pendente, compras parciais e selecionar tudo.
+- Categorização automática nas 11 categorias + banco de setores personalizável pelo usuário.
+- OCR local via Google ML Kit: captura por câmera na prateleira e no topo.
+- Comprovante de compra confirmada com valor total gasto e data/hora atual.
+- Histórico dos últimos 30 dias e comparador de embalagens/unidades.

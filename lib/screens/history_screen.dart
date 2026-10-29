@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../models/shopping_item.dart';
 import '../services/database_service.dart';
 import '../services/money.dart';
 import '../services/quantity.dart';
+import '../theme/app_theme.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
+
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
 }
@@ -14,81 +15,221 @@ class HistoryScreen extends StatefulWidget {
 class _HistoryScreenState extends State<HistoryScreen> {
   final db = DatabaseService.instance;
   List<Map<String, Object?>> purchases = [];
-  int spend = 0;
+  int total30Days = 0;
   bool loading = true;
 
-  Future<void> load() async {
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
     final since = DateTime.now().subtract(const Duration(days: 30));
-    final p = await db.getPurchasesSince(since);
-    final s = await db.getSpendSince(since);
-    if (mounted) setState(() { purchases = p; spend = s; loading = false; });
+    final list = await db.getPurchasesSince(since);
+    final spend = await db.getSpendSince(since);
+    if (!mounted) return;
+    setState(() {
+      purchases = list;
+      total30Days = spend;
+      loading = false;
+    });
+  }
+
+  String _formatDate(String iso) {
+    try {
+      final dt = DateTime.parse(iso);
+      return DateFormat("dd/MM/yyyy 'às' HH:mm", 'pt_BR').format(dt);
+    } catch (_) {
+      return iso;
+    }
   }
 
   @override
-  void initState() { super.initState(); load(); }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Histórico — últimos 30 dias')),
-    body: loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(16), children: [
-      Card(child: ListTile(title: const Text('Total gasto no período'), subtitle: Text(formatCents(spend), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)))),
-      if (purchases.isEmpty) const Padding(padding: EdgeInsets.all(24), child: Text('Nenhuma compra finalizada nos últimos 30 dias.')),
-      ...purchases.map((p) {
-        final date = DateTime.tryParse(p['purchased_at'] as String) ?? DateTime.now();
-        return Card(child: ListTile(
-          leading: const Icon(Icons.receipt_long),
-          title: Text(formatCents((p['total_cents'] as num).toInt())),
-          subtitle: Text('${DateFormat('dd/MM/yyyy HH:mm').format(date)} • ${p['items_count']} produtos'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () async {
-            final id = (p['id'] as num).toInt();
-            final rows = await db.getPurchaseItems(id);
-            if (!context.mounted) return;
-            showDialog<void>(context: context, builder: (ctx) => AlertDialog(
-              title: const Text('Itens da compra'),
-              content: SizedBox(width: double.maxFinite, child: ListView(shrinkWrap: true, children: rows.map((item) =>
-                ListTile(
-                  title: Text(item['name'] as String),
-                  subtitle: Text('${formatQuantity((item['quantity'] as num).toDouble())} ${item['unit']} × ${formatCents((item['unit_price_cents'] as num).toInt())}${item['replaced_from'] == null ? '' : '\nSubstituiu: ${item['replaced_from']}'}\nToque para comparar com compras anteriores'),
-                  trailing: IconButton(
-                    tooltip: 'Adicionar novamente à lista',
-                    icon: const Icon(Icons.add_shopping_cart),
-                    onPressed: () async {
-                      await db.saveItem(ShoppingItem(
-                        name: item['name'] as String,
-                        quantity: (item['quantity'] as num).toDouble(),
-                        unit: item['unit'] as String,
-                        unitPriceCents: (item['unit_price_cents'] as num).toInt(),
-                      ));
-                      if (ctx.mounted) {
-                        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('${item['name']} adicionado à lista.')));
-                      }
-                    },
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.creamBackground,
+      appBar: AppBar(
+        backgroundColor: AppTheme.creamBackground,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, size: 20, color: AppTheme.primaryText),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Histórico de Compras'),
+      ),
+      body: loading
+          ? const Center(
+              child: CircularProgressIndicator(color: AppTheme.primaryDarkGreen),
+            )
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+              children: [
+                // Cartão de Resumo dos Últimos 30 Dias
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: AppTheme.cardDecoration(radius: 18),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: const BoxDecoration(
+                          color: AppTheme.lightGreen,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.receipt_long,
+                          color: AppTheme.primaryDarkGreen,
+                          size: 26,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Total gasto (últimos 30 dias)',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.secondaryText,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              formatCents(total30Days),
+                              style: const TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.w800,
+                                color: AppTheme.primaryDarkGreen,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: AppTheme.lightGreen,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${purchases.length} compra(s)',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.primaryDarkGreen,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  onTap: () async {
-                    final history = await db.getPriceHistory(item['name'] as String);
-                    if (!ctx.mounted) return;
-                    showDialog<void>(context: ctx, builder: (hctx) => AlertDialog(
-                      title: Text('Histórico de preço: ${item['name']}'),
-                      content: SizedBox(width: double.maxFinite, child: history.isEmpty
-                        ? const Text('Não há registros anteriores deste produto.')
-                        : ListView(shrinkWrap: true, children: history.map((h) {
-                            final d = DateTime.tryParse(h['purchased_at'] as String) ?? DateTime.now();
-                            return ListTile(
-                              title: Text(formatCents((h['unit_price_cents'] as num).toInt()) + ' por ${h['unit']}'),
-                              subtitle: Text(DateFormat('dd/MM/yyyy').format(d) + ' • ${formatQuantity((h['quantity'] as num).toDouble())} ${h['unit']}'),
-                              trailing: Text(formatCents((h['subtotal_cents'] as num).toInt())),
-                            );
-                          }).toList())),
-                      actions: [TextButton(onPressed: () => Navigator.pop(hctx), child: const Text('Fechar'))],
-                    ));
-                  },
-                )).toList())),
-              actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fechar'))],
-            ));
-          },
-        ));
-      }),
-    ]),
-  );
+                ),
+                const SizedBox(height: 16),
+
+                if (purchases.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(28),
+                    decoration: AppTheme.cardDecoration(radius: 18, withShadow: false),
+                    child: const Column(
+                      children: [
+                        Icon(Icons.history, size: 48, color: AppTheme.secondaryText),
+                        SizedBox(height: 10),
+                        Text(
+                          'Nenhuma compra finalizada nos últimos 30 dias.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.secondaryText,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  for (final p in purchases)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      decoration: AppTheme.cardDecoration(radius: 16),
+                      child: ExpansionTile(
+                        shape: const Border(),
+                        collapsedShape: const Border(),
+                        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        leading: const Icon(
+                          Icons.chevron_right,
+                          color: AppTheme.primaryDarkGreen,
+                        ),
+                        title: Text(
+                          _formatDate(p['purchased_at'] as String),
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.primaryText,
+                          ),
+                        ),
+                        subtitle: Text(
+                          '${p['items_count']} itens',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppTheme.secondaryText,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        trailing: Text(
+                          formatCents((p['total_cents'] as num).toInt()),
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.primaryText,
+                          ),
+                        ),
+                        children: [
+                          FutureBuilder<List<Map<String, Object?>>>(
+                            future: db.getPurchaseItems((p['id'] as num).toInt()),
+                            builder: (ctx, snap) {
+                              if (!snap.hasData) {
+                                return const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                );
+                              }
+                              final rows = snap.data!;
+                              return Column(
+                                children: [
+                                  const Divider(height: 1),
+                                  for (final item in rows)
+                                    ListTile(
+                                      dense: true,
+                                      title: Text(
+                                        item['name'] as String,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: AppTheme.primaryText,
+                                        ),
+                                      ),
+                                      subtitle: Text(
+                                        '${formatQuantity((item['quantity'] as num).toDouble())} ${item['unit']} × ${formatCents((item['unit_price_cents'] as num).toInt())}'
+                                        '${item['replaced_from'] != null ? ' (substituiu ${item['replaced_from']})' : ''}',
+                                        style: const TextStyle(color: AppTheme.secondaryText),
+                                      ),
+                                      trailing: Text(
+                                        formatCents((item['subtotal_cents'] as num).toInt()),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: AppTheme.primaryDarkGreen,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+              ],
+            ),
+    );
+  }
 }
