@@ -934,7 +934,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        tooltip: 'Criar lista de compras',
+        tooltip: 'Criar lista por seção',
         onPressed: () async {
           await Navigator.push(
             context,
