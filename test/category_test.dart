@@ -32,6 +32,18 @@ void main() {
     expect(ProductCategory.detectCategory('Papel higiênico'), 'Higiene pessoal');
   });
 
+  test('permite ao usuário cadastrar novos itens personalizados no banco de setores', () {
+    ProductCategory.setCustomKeywords({});
+    expect(ProductCategory.detectCategory('Kefir artesanal'), 'Outros');
+
+    ProductCategory.addCustomKeyword('Laticínios', 'Kefir');
+    expect(ProductCategory.detectCategory('Kefir artesanal'), 'Laticínios');
+    expect(ProductCategory.detectCategory('kefir'), 'Laticínios');
+
+    ProductCategory.removeCustomKeyword('Laticínios', 'Kefir');
+    expect(ProductCategory.detectCategory('Kefir artesanal'), 'Outros');
+  });
+
   test('retorna ícones e cores para cada categoria sem erro', () {
     for (final cat in ProductCategory.all) {
       expect(ProductCategory.iconFor(cat), isNotNull);

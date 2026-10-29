@@ -30,6 +30,37 @@ class ProductCategory {
     outros,
   ];
 
+  /// Itens cadastrados pelo próprio usuário no banco de dados para identificação automática
+  static final Map<String, List<String>> _customKeywordsByCategory = {};
+
+  static Map<String, List<String>> get customKeywords => _customKeywordsByCategory;
+
+  static void setCustomKeywords(Map<String, List<String>> customMap) {
+    _customKeywordsByCategory.clear();
+    for (final entry in customMap.entries) {
+      _customKeywordsByCategory[entry.key] =
+          entry.value.map(_normalize).where((e) => e.isNotEmpty).toList();
+    }
+  }
+
+  static void addCustomKeyword(String category, String productName) {
+    final norm = _normalize(productName);
+    if (norm.isEmpty) return;
+    // Remove de outras categorias personalizadas caso já estivesse em outra
+    for (final list in _customKeywordsByCategory.values) {
+      list.remove(norm);
+    }
+    final targetList = _customKeywordsByCategory.putIfAbsent(category, () => []);
+    if (!targetList.contains(norm)) {
+      targetList.add(norm);
+    }
+  }
+
+  static void removeCustomKeyword(String category, String productName) {
+    final norm = _normalize(productName);
+    _customKeywordsByCategory[category]?.remove(norm);
+  }
+
   static String _normalize(String input) {
     var s = input.toLowerCase().trim();
     const from = 'áàâãäéèêëíìîïóòôõöúùûüçñ';
@@ -58,7 +89,7 @@ class ProductCategory {
       'la de aco', 'vassoura', 'rodo', 'pano', 'flanela', 'saco de lixo',
       'lixo', 'alvejante', 'vanish', 'cera', 'inseticida', 'sbp', 'raid',
       'desengordurante', 'limpeza', 'omo', 'tixan', 'brilhante', 'ariel',
-      ' álcool', 'alcool', 'naftalina', 'pedra sanitaria',
+      'alcool', 'naftalina', 'pedra sanitaria',
     ],
     higienePessoal: [
       'sabonete', 'dove', 'lux', 'protex', 'shampoo', 'xampu', 'condicionador',
@@ -123,22 +154,44 @@ class ProductCategory {
     ],
   };
 
-  /// Identifica automaticamente a categoria pelo nome do produto digitado.
+  /// Identifica automaticamente a categoria pelo nome do produto digitado,
+  /// priorizando os itens cadastrados pelo usuário no banco!
   static String detectCategory(String productName) {
     final norm = _normalize(productName);
     if (norm.isEmpty) return outros;
+    final padded = ' $norm ';
     final words = norm.split(' ');
 
-    // 1. Verifica expressões compostas ou palavras exatas
+    // 1. Verifica primeiro os itens cadastrados pelo próprio usuário no banco
+    for (final entry in _customKeywordsByCategory.entries) {
+      for (final kw in entry.value) {
+        final normKw = _normalize(kw);
+        if (normKw.isEmpty) continue;
+        if (norm == normKw || padded.contains(' $normKw ')) {
+          return entry.key;
+        }
+        if (!normKw.contains(' ') &&
+            words.any((w) => w == normKw || w == '${normKw}s' || w == '${normKw}es')) {
+          return entry.key;
+        }
+      }
+    }
+
+    // 2. Verifica expressões compostas do banco padrão (ex: "molho de tomate", "agua sanitaria")
     for (final entry in _keywordsByCategory.entries) {
       for (final kw in entry.value) {
         final normKw = _normalize(kw);
-        if (norm == normKw || norm.contains(normKw)) {
-          // Se a palavra-chave é composta (ex: "agua sanitaria"), prioriza
-          if (normKw.contains(' ')) {
-            return entry.key;
-          }
-          // Se é palavra simples, confere se está entre as palavras ou é prefixo
+        if (normKw.contains(' ') && padded.contains(' $normKw ')) {
+          return entry.key;
+        }
+      }
+    }
+
+    // 3. Verifica palavras individuais do banco padrão (exatas ou plural)
+    for (final entry in _keywordsByCategory.entries) {
+      for (final kw in entry.value) {
+        final normKw = _normalize(kw);
+        if (!normKw.contains(' ')) {
           if (words.any((w) => w == normKw || w == '${normKw}s' || w == '${normKw}es')) {
             return entry.key;
           }

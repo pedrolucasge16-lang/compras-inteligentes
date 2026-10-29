@@ -1,11 +1,14 @@
+import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+import '../models/category.dart';
 import '../models/shopping_item.dart';
 
 class DatabaseService {
   DatabaseService._();
   static final DatabaseService instance = DatabaseService._();
   Database? _db;
+  bool _customCategoriesLoaded = false;
 
   Future<Database> get database async {
     if (_db != null) return _db!;
@@ -59,7 +62,66 @@ class DatabaseService {
     return _db!;
   }
 
+  /// Carrega os itens personalizados que o usuário cadastrou em cada categoria
+  Future<Map<String, List<String>>> loadCustomCategories() async {
+    final db = await database;
+    final rows = await db.query(
+      'settings',
+      where: 'key = ?',
+      whereArgs: ['custom_category_items'],
+    );
+    if (rows.isEmpty) {
+      _customCategoriesLoaded = true;
+      return ProductCategory.customKeywords;
+    }
+    try {
+      final raw = rows.first['value'] as String;
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      final map = <String, List<String>>{};
+      for (final entry in decoded.entries) {
+        final list = (entry.value as List<dynamic>).map((e) => e.toString()).toList();
+        map[entry.key] = list;
+      }
+      ProductCategory.setCustomKeywords(map);
+    } catch (_) {
+      // Se houver erro de formato antigo, ignora com segurança
+    }
+    _customCategoriesLoaded = true;
+    return ProductCategory.customKeywords;
+  }
+
+  /// Salva um novo item no banco de uma categoria para ser identificado automaticamente
+  Future<void> saveCustomCategoryItem(String category, String productName) async {
+    if (!_customCategoriesLoaded) {
+      await loadCustomCategories();
+    }
+    ProductCategory.addCustomKeyword(category, productName);
+    await _persistCustomCategories();
+  }
+
+  /// Remove um item personalizado do banco de uma categoria
+  Future<void> removeCustomCategoryItem(String category, String productName) async {
+    if (!_customCategoriesLoaded) {
+      await loadCustomCategories();
+    }
+    ProductCategory.removeCustomKeyword(category, productName);
+    await _persistCustomCategories();
+  }
+
+  Future<void> _persistCustomCategories() async {
+    final db = await database;
+    final encoded = jsonEncode(ProductCategory.customKeywords);
+    await db.insert(
+      'settings',
+      {'key': 'custom_category_items', 'value': encoded},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
   Future<List<ShoppingItem>> getItems() async {
+    if (!_customCategoriesLoaded) {
+      await loadCustomCategories();
+    }
     final rows = await (await database).query('shopping_items', orderBy: 'id DESC');
     return rows.map(ShoppingItem.fromMap).toList();
   }
@@ -85,8 +147,6 @@ class DatabaseService {
   }
 
   /// Salva itens comprados ou parcialmente comprados no histórico.
-  /// Itens totalmente concluídos são removidos da lista.
-  /// Itens parcialmente comprados têm a porção comprada arquivada e o restante permanece na lista.
   Future<int> finishPurchase() async {
     final db = await database;
     final all = await getItems();
@@ -119,7 +179,6 @@ class DatabaseService {
           if (item.isFullyBought) {
             await txn.delete('shopping_items', where: 'id = ?', whereArgs: [item.id]);
           } else {
-            // Permanece na lista apenas o que falta comprar
             final remaining = item.remainingQuantity;
             await txn.update(
               'shopping_items',
@@ -135,7 +194,6 @@ class DatabaseService {
           }
         }
       }
-      // Remove produtos que foram substituídos durante a compra
       await txn.delete('shopping_items', where: 'replaced_by IS NOT NULL');
       return id;
     });

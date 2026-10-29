@@ -41,6 +41,9 @@ class _CreateListScreenState extends State<CreateListScreen> {
 
   void _onNameChanged() {
     final text = _nameController.text;
+    if (text.trim().isEmpty) {
+      _manualCategoryOverride = null;
+    }
     final autoCat = ProductCategory.detectCategory(text);
     final effectiveCat = _manualCategoryOverride ?? autoCat;
     final autoUnit = ProductCategory.suggestUnit(text, effectiveCat);
@@ -55,6 +58,7 @@ class _CreateListScreenState extends State<CreateListScreen> {
   }
 
   Future<void> _load() async {
+    await db.loadCustomCategories();
     final data = await db.getItems();
     if (!mounted) return;
     setState(() {
@@ -68,6 +72,11 @@ class _CreateListScreenState extends State<CreateListScreen> {
     if (text.isEmpty) return;
 
     final categoryToSave = _manualCategoryOverride ?? ProductCategory.detectCategory(text);
+
+    // Se o usuário escolheu manualmente um setor para uma palavra nova, salva no banco automaticamente!
+    if (_manualCategoryOverride != null && categoryToSave != ProductCategory.outros) {
+      await db.saveCustomCategoryItem(categoryToSave, text);
+    }
 
     final newItem = ShoppingItem(
       name: text,
@@ -102,34 +111,253 @@ class _CreateListScreenState extends State<CreateListScreen> {
     }
   }
 
-  Future<void> _pickCategoryOverride() async {
-    final chosen = await showModalBottomSheet<String>(
+  /// Abre janela para cadastrar novos itens no banco de um setor específico
+  Future<void> _openRegisterInBankDialog([String? initialCategory]) async {
+    String selectedCat = initialCategory != null && initialCategory != ProductCategory.outros
+        ? initialCategory
+        : ProductCategory.carnes;
+    final wordCtrl = TextEditingController(text: _nameController.text.trim());
+
+    await showDialog<void>(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Mudar setor manualmente',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          final savedWords = ProductCategory.customKeywords[selectedCat] ?? const <String>[];
+          final catColor = ProductCategory.colorFor(selectedCat);
+
+          return AlertDialog(
+            title: const Text('Cadastrar no Banco de Setores'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Cadastre produtos neste setor para que o aplicativo sempre os identifique sozinho quando você digitar:',
+                    style: TextStyle(fontSize: 13, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: selectedCat,
+                    decoration: const InputDecoration(
+                      labelText: 'Escolha o Setor',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: ProductCategory.all
+                        .map((c) => DropdownMenuItem(
+                              value: c,
+                              child: Row(
+                                children: [
+                                  Icon(ProductCategory.iconFor(c),
+                                      size: 18, color: ProductCategory.colorFor(c)),
+                                  const SizedBox(width: 8),
+                                  Text(c),
+                                ],
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) setD(() => selectedCat = v);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: wordCtrl,
+                          autofocus: true,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: InputDecoration(
+                            labelText: 'Nome do item p/ $selectedCat',
+                            hintText: 'Ex: Rabada, Veja Gold...',
+                            border: const OutlineInputBorder(),
+                          ),
+                          onSubmitted: (_) async {
+                            final w = wordCtrl.text.trim();
+                            if (w.isEmpty) return;
+                            await db.saveCustomCategoryItem(selectedCat, w);
+                            wordCtrl.clear();
+                            setD(() {});
+                            _onNameChanged();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        style: IconButton.styleFrom(backgroundColor: catColor),
+                        tooltip: 'Salvar no banco',
+                        icon: const Icon(Icons.add),
+                        onPressed: () async {
+                          final w = wordCtrl.text.trim();
+                          if (w.isEmpty) return;
+                          await db.saveCustomCategoryItem(selectedCat, w);
+                          wordCtrl.clear();
+                          setD(() {});
+                          _onNameChanged();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                backgroundColor: Colors.green.shade800,
+                                content: Text('✅ "$w" salvo no banco de $selectedCat!'),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                  if (savedWords.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      'Itens que você já cadastrou em $selectedCat:',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final word in savedWords)
+                          Chip(
+                            label: Text(word),
+                            backgroundColor: catColor.withOpacity(0.12),
+                            deleteIcon: const Icon(Icons.close, size: 16),
+                            onDeleted: () async {
+                              await db.removeCustomCategoryItem(selectedCat, word);
+                              setD(() {});
+                              _onNameChanged();
+                            },
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
               ),
             ),
-            for (final cat in ProductCategory.all)
-              ListTile(
-                leading: Icon(ProductCategory.iconFor(cat), color: ProductCategory.colorFor(cat)),
-                title: Text(cat),
-                onTap: () => Navigator.pop(ctx, cat),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Concluir'),
               ),
-          ],
+            ],
+          );
+        },
+      ),
+    );
+    _onNameChanged();
+  }
+
+  /// Ao tocar no quadrado "Setor: ...", permite escolher o setor (já memorizando no banco!)
+  /// ou abrir o cadastro de novos itens no banco de setores.
+  Future<void> _pickCategoryOverride() async {
+    final currentTyped = _nameController.text.trim();
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.7,
+          maxChildSize: 0.9,
+          builder: (ctx, scrollCtrl) => ListView(
+            controller: scrollCtrl,
+            padding: const EdgeInsets.all(16),
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      currentTyped.isNotEmpty
+                          ? 'Qual o setor de "$currentTyped"?'
+                          : 'Setores e Banco de Produtos',
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+              if (currentTyped.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Ao escolher um setor abaixo, "$currentTyped" será salvo no banco para ser identificado automaticamente nas próximas vezes!',
+                    style: TextStyle(fontSize: 12, color: Colors.green.shade800, fontWeight: FontWeight.w600),
+                  ),
+                ),
+
+              // Botão em destaque para cadastrar vários itens no banco de qualquer setor
+              FilledButton.tonalIcon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _openRegisterInBankDialog(_detectedCategory);
+                },
+                icon: const Icon(Icons.library_add),
+                label: const Text(
+                  'Cadastrar novos itens no banco de setores',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              const Divider(height: 20),
+
+              for (final cat in ProductCategory.all)
+                ListTile(
+                  leading: CircleAvatar(
+                    radius: 16,
+                    backgroundColor: ProductCategory.colorFor(cat).withOpacity(0.15),
+                    child: Icon(
+                      ProductCategory.iconFor(cat),
+                      color: ProductCategory.colorFor(cat),
+                      size: 18,
+                    ),
+                  ),
+                  title: Text(cat, style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: (ProductCategory.customKeywords[cat]?.isNotEmpty ?? false)
+                      ? Text(
+                          'Seus itens salvos: ${ProductCategory.customKeywords[cat]!.join(", ")}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 11),
+                        )
+                      : null,
+                  trailing: TextButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _openRegisterInBankDialog(cat);
+                    },
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Cadastrar', style: TextStyle(fontSize: 12)),
+                  ),
+                  onTap: () => Navigator.pop(ctx, cat),
+                ),
+            ],
+          ),
         ),
       ),
     );
     if (chosen != null) {
+      if (currentTyped.isNotEmpty && chosen != ProductCategory.outros) {
+        await db.saveCustomCategoryItem(chosen, currentTyped);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.green.shade800,
+              duration: const Duration(seconds: 2),
+              content: Text(
+                '✅ "$currentTyped" salvo no banco de $chosen! Será identificado sozinho sempre.',
+              ),
+            ),
+          );
+        }
+      }
       setState(() {
         _manualCategoryOverride = chosen;
         _detectedCategory = chosen;
+        _unit = ProductCategory.suggestUnit(currentTyped, chosen);
       });
     }
   }
@@ -146,10 +374,10 @@ class _CreateListScreenState extends State<CreateListScreen> {
         actions: [
           TextButton.icon(
             onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.check, color: Colors.white),
+            icon: const Icon(Icons.check),
             label: const Text(
               'Concluir',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              style: TextStyle(fontWeight: FontWeight.bold),
             ),
           ),
         ],
@@ -158,7 +386,7 @@ class _CreateListScreenState extends State<CreateListScreen> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // Painel de Adição Rápida (1 campo só, categoria automática!)
+                // Painel de Adição Rápida
                 Card(
                   margin: const EdgeInsets.all(16),
                   elevation: 3,
@@ -190,10 +418,9 @@ class _CreateListScreenState extends State<CreateListScreen> {
                         ),
                         const SizedBox(height: 12),
 
-                        // Linha que mostra a categoria detectada automaticamente + quantidade
+                        // Quadrado do Setor (com toque para escolher ou cadastrar novos itens no banco!) + Quantidade
                         Row(
                           children: [
-                            // Badge do setor identificado sozinho
                             Expanded(
                               child: InkWell(
                                 onTap: _pickCategoryOverride,
@@ -211,17 +438,30 @@ class _CreateListScreenState extends State<CreateListScreen> {
                                       Icon(catIcon, size: 18, color: catColor),
                                       const SizedBox(width: 6),
                                       Expanded(
-                                        child: Text(
-                                          'Setor: $_detectedCategory',
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.bold,
-                                            color: catColor,
-                                          ),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Setor: $_detectedCategory',
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.bold,
+                                                color: catColor,
+                                              ),
+                                            ),
+                                            Text(
+                                              'Toque p/ mudar ou cadastrar no banco',
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                color: catColor.withOpacity(0.85),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                      Icon(Icons.edit_outlined, size: 14, color: catColor),
+                                      Icon(Icons.add_circle_outline, size: 18, color: catColor),
                                     ],
                                   ),
                                 ),
@@ -279,7 +519,7 @@ class _CreateListScreenState extends State<CreateListScreen> {
                           child: Padding(
                             padding: const EdgeInsets.all(24),
                             child: Text(
-                              'Digite o nome do produto acima (ex: "Frango" ou "Sabão").\nO aplicativo coloca no setor certo automaticamente!',
+                              'Digite o nome do produto acima.\nSe algum item não estiver no banco, basta tocar em "Setor" para cadastrá-lo uma única vez!',
                               textAlign: TextAlign.center,
                               style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
                             ),

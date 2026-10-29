@@ -227,6 +227,9 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (result != null) {
+      if (result.category != ProductCategory.outros) {
+        await db.saveCustomCategoryItem(result.category, result.name);
+      }
       await db.saveItem(result);
       await _load();
     }
