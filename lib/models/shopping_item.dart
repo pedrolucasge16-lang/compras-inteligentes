@@ -14,6 +14,8 @@ class ShoppingItem {
     this.actualUnitPriceCents,
     this.category = ProductCategory.outros,
     this.boughtQuantity = 0.0,
+    this.imagePath,
+    this.marketName,
   });
 
   final int? id;
@@ -28,6 +30,8 @@ class ShoppingItem {
   final int? actualUnitPriceCents;
   final String category;
   final double boughtQuantity;
+  final String? imagePath;
+  final String? marketName;
 
   int get effectiveUnitPriceCents => actualUnitPriceCents ?? unitPriceCents;
   int get subtotalCents => (effectiveUnitPriceCents * quantity).round();
@@ -57,6 +61,8 @@ class ShoppingItem {
     'actual_unit_price_cents': actualUnitPriceCents,
     'category': category,
     'bought_quantity': boughtQuantity,
+    'image_path': imagePath,
+    'market_name': marketName,
   };
 
   factory ShoppingItem.fromMap(Map<String, Object?> map) => ShoppingItem(
@@ -73,6 +79,8 @@ class ShoppingItem {
     category: (map['category'] as String?) ?? ProductCategory.outros,
     boughtQuantity: (map['bought_quantity'] as num?)?.toDouble() ??
         ((map['is_bought'] as int? ?? 0) == 1 ? (map['quantity'] as num).toDouble() : 0.0),
+    imagePath: map['image_path'] as String?,
+    marketName: map['market_name'] as String?,
   );
 
   ShoppingItem copyWith({
@@ -88,8 +96,11 @@ class ShoppingItem {
     int? actualUnitPriceCents,
     String? category,
     double? boughtQuantity,
+    String? imagePath,
+    String? marketName,
     bool clearReplacement = false,
     bool clearActualPrice = false,
+    bool clearImagePath = false,
   }) => ShoppingItem(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -103,5 +114,7 @@ class ShoppingItem {
     actualUnitPriceCents: clearActualPrice ? null : (actualUnitPriceCents ?? this.actualUnitPriceCents),
     category: category ?? this.category,
     boughtQuantity: boughtQuantity ?? this.boughtQuantity,
+    imagePath: clearImagePath ? null : (imagePath ?? this.imagePath),
+    marketName: marketName ?? this.marketName,
   );
 }

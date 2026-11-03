@@ -609,71 +609,51 @@ class _CreateListScreenState extends State<CreateListScreen> {
                       ),
                     )
                   else ...[
-                    for (final cat in ProductCategory.all) ...[
-                      if (active.any((i) => i.category == cat)) ...[
-                        Padding(
-                          padding: const EdgeInsets.only(top: 10, bottom: 6),
-                          child: Row(
-                            children: [
-                              Icon(
-                                ProductCategory.iconFor(cat),
-                                size: 17,
-                                color: ProductCategory.colorFor(cat),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                cat,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  color: ProductCategory.colorFor(cat),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
+                    // Exibe os itens recém-adicionados SEMPRE no topo (active já vem em ordem id DESC)
+                    for (final item in active)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: AppTheme.cardDecoration(radius: 14, withShadow: false),
+                        child: Row(
                           children: [
-                            for (final item in active.where((i) => i.category == cat))
-                              Container(
-                                padding: const EdgeInsets.fromLTRB(12, 6, 8, 6),
-                                decoration: BoxDecoration(
-                                  color: ProductCategory.colorFor(cat).withOpacity(0.11),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      '${item.name} (${formatQuantity(item.quantity)} ${item.unit})',
-                                      style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                        color: AppTheme.primaryText,
-                                      ),
+                            Icon(
+                              ProductCategory.iconFor(item.category),
+                              size: 18,
+                              color: ProductCategory.colorFor(item.category),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.name,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.primaryText,
                                     ),
-                                    const SizedBox(width: 6),
-                                    InkWell(
-                                      borderRadius: BorderRadius.circular(12),
-                                      onTap: item.id == null ? null : () => _deleteItem(item.id!),
-                                      child: const Padding(
-                                        padding: EdgeInsets.all(2),
-                                        child: Icon(
-                                          Icons.close,
-                                          size: 16,
-                                          color: AppTheme.secondaryText,
-                                        ),
-                                      ),
+                                  ),
+                                  Text(
+                                    '${item.category} • ${formatQuantity(item.quantity)} ${item.unit}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: ProductCategory.colorFor(item.category),
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.close, size: 18, color: AppTheme.secondaryText),
+                              onPressed: item.id == null ? null : () => _deleteItem(item.id!),
+                            ),
                           ],
                         ),
-                      ],
-                    ],
+                      ),
                   ],
 
                   const SizedBox(height: 24),

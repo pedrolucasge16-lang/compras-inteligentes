@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -5,10 +6,11 @@ import 'package:intl/intl.dart';
 import '../models/category.dart';
 import '../models/shopping_item.dart';
 import '../services/database_service.dart';
+import '../services/location_market_service.dart';
 import '../services/money.dart';
 import '../services/ocr_service.dart';
-import '../services/product_matcher.dart';
 import '../services/quantity.dart';
+import '../services/site_sync_service.dart';
 import '../theme/app_theme.dart';
 import 'create_list_screen.dart';
 import 'history_screen.dart';
@@ -26,6 +28,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final db = DatabaseService.instance;
   List<ShoppingItem> items = [];
   int budget = 0;
+  String currentMarketName = '';
+  String currentMarketLocation = '';
   bool loading = true;
   int _currentTabIndex = 0;
   String _selectedCategoryFilter = 'Todos';
@@ -39,10 +43,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _load() async {
     final data = await db.getItems();
     final b = await db.getBudget();
+    final market = await db.getCurrentMarket();
     if (!mounted) return;
     setState(() {
       items = data;
       budget = b;
+      currentMarketName = market.$1;
+      currentMarketLocation = market.$2;
       loading = false;
     });
   }
@@ -56,7 +63,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool get isAllSelected =>
       activeItems.isNotEmpty && activeItems.every((i) => i.isFullyBought);
 
-  /// Seleciona ou desmarca TODOS os itens da lista de uma vez (Select All)
   Future<void> _toggleSelectAll(bool selectAll) async {
     for (final item in activeItems) {
       final updated = item.copyWith(
@@ -68,7 +74,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await _load();
   }
 
-  /// Marca ou desmarca um item individualmente direto no quadradinho
   Future<void> _toggleItemCheckbox(ShoppingItem item, bool checked) async {
     final updated = item.copyWith(
       isBought: checked,
@@ -78,7 +83,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await _load();
   }
 
-  /// Abre a tela de adicionar itens à lista
   Future<void> _openQuickAdd() async {
     await Navigator.push(
       context,
@@ -87,11 +91,809 @@ class _HomeScreenState extends State<HomeScreen> {
     await _load();
   }
 
-  /// Diálogo de adicionar ou editar produto (com detecção automática de categoria)
-  Future<void> _editItem([ShoppingItem? old, OcrSuggestion? suggestion]) async {
-    final name = TextEditingController(text: suggestion?.productName ?? old?.name ?? '');
+  /// Extrai SOMENTE NÚMEROS de preço a partir do resultado do OCR (para o quadrado de cima da câmera)
+  int? _extractNumericPriceOnly(OcrSuggestion suggestion) {
+    if (suggestion.priceCents != null && suggestion.priceCents! > 0) {
+      return suggestion.priceCents;
+    }
+    if (suggestion.candidates.isNotEmpty) {
+      return suggestion.candidates.first;
+    }
+    // Procura padrões numéricos de preço (ex: 18,90 ou 18.90 ou números isolados)
+    final raw = suggestion.text;
+    final decMatch = RegExp(r'(\d{1,4})\s*[,.]\s*(\d{2})').firstMatch(raw);
+    if (decMatch != null) {
+      final reais = int.tryParse(decMatch.group(1)!) ?? 0;
+      final cents = int.tryParse(decMatch.group(2)!) ?? 0;
+      final totalCents = reais * 100 + cents;
+      if (totalCents > 0) return totalCents;
+    }
+    final digitsOnly = RegExp(r'\b(\d{1,3})\b').firstMatch(raw);
+    if (digitsOnly != null) {
+      final val = int.tryParse(digitsOnly.group(1)!) ?? 0;
+      if (val > 0) return val * 100;
+    }
+    return null;
+  }
+
+  /// Extrai o NOME DO PRODUTO (ignorando números isolados) para o quadrado de baixo da câmera
+  String? _extractProductNameOnly(OcrSuggestion suggestion) {
+    if (suggestion.productName != null && suggestion.productName!.trim().isNotEmpty) {
+      return suggestion.productName!.trim();
+    }
+    final lines = suggestion.text
+        .split('\n')
+        .map((l) => l.replaceAll(RegExp(r'[0-9R\$.,:/-]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim())
+        .where((l) => l.length >= 3)
+        .toList();
+    if (lines.isNotEmpty) {
+      return lines.first;
+    }
+    return null;
+  }
+
+  /// JANELA COM OS 2 QUADRADINHOS COM "+" SOLICITADA PELO USUÁRIO:
+  /// - Quadrado de cima (+): Tira foto do PREÇO (lê somente números)
+  /// - Quadrado de baixo (+): Tira foto do NOME / PRODUTO (lê o nome e salva a foto do produto)
+  Future<void> _openTwoSquareCameraModal([ShoppingItem? existingItem]) async {
+    final nameCtrl = TextEditingController(text: existingItem?.name ?? '');
+    final priceCtrl = TextEditingController(
+      text: (existingItem != null && existingItem.effectiveUnitPriceCents > 0)
+          ? centsToInput(existingItem.effectiveUnitPriceCents)
+          : '',
+    );
+    final qtyCtrl = TextEditingController(
+      text: formatQuantity(existingItem?.quantity ?? 1.0),
+    );
+    String unit = existingItem?.unit ?? 'un';
+    String category = existingItem?.category ??
+        (nameCtrl.text.isNotEmpty
+            ? ProductCategory.detectCategory(nameCtrl.text)
+            : ProductCategory.outros);
+
+    String? pricePhotoPreviewPath;
+    String? productPhotoPath = existingItem?.imagePath;
+    List<int> numericCandidates = [];
+    bool readingPrice = false;
+    bool readingProduct = false;
+
+    final savedItem = await showDialog<ShoppingItem>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          backgroundColor: AppTheme.creamBackground,
+          title: Row(
+            children: [
+              const Icon(Icons.camera_enhance, color: AppTheme.primaryDarkGreen),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  existingItem == null
+                      ? 'Adicionar por Câmera'
+                      : 'Fotografar: ${existingItem.name}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 1º QUADRADO (CIMA): FOTO DO PREÇO (LÊ SOMENTE NÚMEROS)
+                const Text(
+                  '1. Foto do Preço (lê somente números)',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.primaryDarkGreen,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () async {
+                    try {
+                      final img = await ImagePicker().pickImage(
+                        source: ImageSource.camera,
+                        imageQuality: 85,
+                      );
+                      if (img == null) return;
+                      setD(() {
+                        readingPrice = true;
+                        pricePhotoPreviewPath = img.path;
+                      });
+                      final suggestion = await OcrService.readImage(img.path);
+                      final priceCents = _extractNumericPriceOnly(suggestion);
+                      setD(() {
+                        readingPrice = false;
+                        numericCandidates = suggestion.candidates;
+                        if (priceCents != null && priceCents > 0) {
+                          priceCtrl.text = centsToInput(priceCents);
+                        }
+                      });
+                    } on PlatformException catch (e) {
+                      setD(() => readingPrice = false);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Erro na câmera: ${e.message ?? e.code}')),
+                        );
+                      }
+                    } catch (_) {
+                      setD(() => readingPrice = false);
+                    }
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    height: 108,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.cardWhite,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: pricePhotoPreviewPath != null
+                            ? AppTheme.accentGreen
+                            : AppTheme.primaryDarkGreen,
+                        width: 1.6,
+                      ),
+                    ),
+                    child: readingPrice
+                        ? const Center(
+                            child: CircularProgressIndicator(color: AppTheme.primaryDarkGreen),
+                          )
+                        : Row(
+                            children: [
+                              Container(
+                                width: 68,
+                                height: 68,
+                                decoration: BoxDecoration(
+                                  color: AppTheme.lightGreen,
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: pricePhotoPreviewPath != null &&
+                                        File(pricePhotoPreviewPath!).existsSync()
+                                    ? Image.file(
+                                        File(pricePhotoPreviewPath!),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : const Icon(
+                                        Icons.add,
+                                        size: 36,
+                                        color: AppTheme.primaryDarkGreen,
+                                      ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      priceCtrl.text.isNotEmpty
+                                          ? 'Preço lido: R\$ ${priceCtrl.text}'
+                                          : 'Toque no "+" p/ fotografar o preço',
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w800,
+                                        color: AppTheme.primaryText,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    const Text(
+                                      'Captura apenas os números da etiqueta.',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: AppTheme.secondaryText,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+
+                if (numericCandidates.length > 1) ...[
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      for (final c in numericCandidates)
+                        ActionChip(
+                          backgroundColor: AppTheme.lightGreen,
+                          label: Text(formatCents(c), style: const TextStyle(fontSize: 12)),
+                          onPressed: () => setD(() => priceCtrl.text = centsToInput(c)),
+                        ),
+                    ],
+                  ),
+                ],
+
+                const SizedBox(height: 14),
+
+                // 2º QUADRADO (BAIXO): FOTO DO PRODUTO / NOME
+                const Text(
+                  '2. Foto do Produto (lê o nome e salva a foto)',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.primaryDarkGreen,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () async {
+                    try {
+                      final img = await ImagePicker().pickImage(
+                        source: ImageSource.camera,
+                        imageQuality: 80,
+                      );
+                      if (img == null) return;
+                      setD(() => readingProduct = true);
+                      final savedPath = await db.persistProductImage(img.path);
+                      final suggestion = await OcrService.readImage(savedPath);
+                      final extractedName = _extractProductNameOnly(suggestion);
+                      setD(() {
+                        readingProduct = false;
+                        productPhotoPath = savedPath;
+                        if (extractedName != null &&
+                            extractedName.isNotEmpty &&
+                            (existingItem == null || nameCtrl.text.trim().isEmpty)) {
+                          nameCtrl.text = extractedName;
+                          category = ProductCategory.detectCategory(extractedName);
+                          unit = ProductCategory.suggestUnit(extractedName, category);
+                        }
+                      });
+                    } on PlatformException catch (e) {
+                      setD(() => readingProduct = false);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Erro na câmera: ${e.message ?? e.code}')),
+                        );
+                      }
+                    } catch (_) {
+                      setD(() => readingProduct = false);
+                    }
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    height: 108,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.cardWhite,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: productPhotoPath != null
+                            ? AppTheme.accentGreen
+                            : AppTheme.primaryDarkGreen,
+                        width: 1.6,
+                      ),
+                    ),
+                    child: readingProduct
+                        ? const Center(
+                            child: CircularProgressIndicator(color: AppTheme.primaryDarkGreen),
+                          )
+                        : Row(
+                            children: [
+                              Container(
+                                width: 68,
+                                height: 68,
+                                decoration: BoxDecoration(
+                                  color: AppTheme.lightGreen,
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: productPhotoPath != null &&
+                                        File(productPhotoPath!).existsSync()
+                                    ? Image.file(
+                                        File(productPhotoPath!),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : const Icon(
+                                        Icons.add,
+                                        size: 36,
+                                        color: AppTheme.primaryDarkGreen,
+                                      ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      productPhotoPath != null
+                                          ? 'Foto do produto adicionada!'
+                                          : 'Toque no "+" p/ fotografar o produto',
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w800,
+                                        color: AppTheme.primaryText,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    const Text(
+                                      'Lê o nome e guarda a miniatura na lista.',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: AppTheme.secondaryText,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+
+                const Divider(height: 24),
+
+                // Campos de conferência rápida (Nome e Preço numérico)
+                TextField(
+                  controller: nameCtrl,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    labelText: 'Nome do produto',
+                    prefixIcon: Icon(Icons.shopping_bag_outlined, color: AppTheme.accentGreen),
+                  ),
+                  onChanged: (v) {
+                    setD(() {
+                      category = ProductCategory.detectCategory(v);
+                      unit = ProductCategory.suggestUnit(v, category);
+                    });
+                  },
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: priceCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Preço (R\$)',
+                          prefixIcon: Icon(Icons.attach_money, color: AppTheme.primaryDarkGreen),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: qtyCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: InputDecoration(
+                          labelText: 'Qtd ($unit)',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton.icon(
+              icon: const Icon(Icons.check),
+              label: const Text('Confirmar'),
+              onPressed: () {
+                final finalName = nameCtrl.text.trim().isNotEmpty
+                    ? nameCtrl.text.trim()
+                    : (existingItem?.name ?? 'Produto fotografado');
+                final q = double.tryParse(qtyCtrl.text.replaceAll(',', '.')) ??
+                    (existingItem?.quantity ?? 1.0);
+                final parsedPrice = priceCtrl.text.trim().isEmpty
+                    ? (existingItem?.effectiveUnitPriceCents ?? 0)
+                    : parseMoneyToCents(priceCtrl.text);
+
+                Navigator.pop(
+                  ctx,
+                  ShoppingItem(
+                    id: existingItem?.id,
+                    name: finalName,
+                    quantity: q > 0 ? q : 1.0,
+                    unit: unit,
+                    unitPriceCents: parsedPrice,
+                    actualUnitPriceCents: parsedPrice > 0 ? parsedPrice : existingItem?.actualUnitPriceCents,
+                    isBought: parsedPrice > 0 ? true : (existingItem?.isBought ?? false),
+                    boughtQuantity: parsedPrice > 0 ? (q > 0 ? q : 1.0) : (existingItem?.boughtQuantity ?? 0.0),
+                    category: category,
+                    imagePath: productPhotoPath,
+                    marketName: currentMarketName.isNotEmpty ? currentMarketName : existingItem?.marketName,
+                    replacedBy: existingItem?.replacedBy,
+                    originalItemId: existingItem?.originalItemId,
+                    originalItemName: existingItem?.originalItemName,
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (savedItem != null) {
+      await db.saveItem(savedItem);
+      await _load();
+      // Atualiza também o arquivo JSON da vitrine em segundo plano
+      SiteSyncService.buildVitrineJson();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '✅ "${savedItem.name}" salvo com sucesso${savedItem.effectiveUnitPriceCents > 0 ? ' (${formatCents(savedItem.effectiveUnitPriceCents)})' : ''}!',
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Abre a foto do produto GRANDE e NÍTIDA com zoom quando o usuário clica na miniatura do item
+  Future<void> _showFullProductImageDialog(ShoppingItem item) async {
+    if (item.imagePath == null || !File(item.imagePath!).existsSync()) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(16),
+        child: Container(
+          decoration: AppTheme.cardDecoration(radius: 22),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Cabeçalho com Nome e Botão Fechar
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                color: AppTheme.primaryDarkGreen,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          Text(
+                            '${item.category}${item.marketName != null && item.marketName!.isNotEmpty ? ' • ${item.marketName}' : ''}',
+                            style: const TextStyle(
+                              color: AppTheme.lightGreen,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Foto Grande e Nítida com suporte a Zoom (Pinça)
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.62,
+                ),
+                child: InteractiveViewer(
+                  minScale: 1.0,
+                  maxScale: 4.0,
+                  child: Image.file(
+                    File(item.imagePath!),
+                    width: double.infinity,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+
+              // Rodapé com Preço e opção de trocar foto
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Preço registrado',
+                          style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
+                        ),
+                        Text(
+                          formatCents(item.effectiveUnitPriceCents),
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.primaryDarkGreen,
+                          ),
+                        ),
+                      ],
+                    ),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                      label: const Text('Nova foto'),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _openTwoSquareCameraModal(item);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Diálogo para buscar a localização atual do usuário e selecionar o mercado
+  Future<void> _openMarketLocationDialog() async {
+    final nameCtrl = TextEditingController(text: currentMarketName);
+    final locCtrl = TextEditingController(text: currentMarketLocation);
+    final savedMarkets = await db.getSavedMarkets();
+    List<MarketPlaceSuggestion> nearby = [];
+    bool searchingGps = false;
+
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          backgroundColor: AppTheme.creamBackground,
+          title: const Row(
+            children: [
+              Icon(Icons.location_on, color: AppTheme.primaryDarkGreen),
+              SizedBox(width: 8),
+              Expanded(child: Text('Mercado e Localização')),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Botão para buscar localização e supermercados próximos automaticamente
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonalIcon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.lightGreen,
+                      foregroundColor: AppTheme.primaryDarkGreen,
+                    ),
+                    icon: searchingGps
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.my_location),
+                    label: Text(
+                      searchingGps
+                          ? 'Buscando localização...'
+                          : 'Buscar minha localização atual',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    onPressed: searchingGps
+                        ? null
+                        : () async {
+                            setD(() => searchingGps = true);
+                            final res = await LocationMarketService.detectLocationAndNearbyMarkets(
+                              nameCtrl.text,
+                            );
+                            setD(() {
+                              searchingGps = false;
+                              if (locCtrl.text.trim().isEmpty) {
+                                locCtrl.text = res.$1;
+                              }
+                              nearby = res.$2;
+                            });
+                          },
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                TextField(
+                  controller: nameCtrl,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Nome do Supermercado',
+                    hintText: 'Ex: Guanabara, Mundial, Assaí...',
+                    prefixIcon: Icon(Icons.storefront, color: AppTheme.primaryDarkGreen),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: locCtrl,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Bairro / Cidade (Localização)',
+                    hintText: 'Ex: Tijuca - Rio de Janeiro, RJ',
+                    prefixIcon: Icon(Icons.place_outlined, color: AppTheme.accentGreen),
+                  ),
+                ),
+
+                if (nearby.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Mercados encontrados próximos a você (toque p/ escolher):',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.primaryDarkGreen,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  for (final m in nearby)
+                    Card(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      child: ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.store, color: AppTheme.primaryDarkGreen),
+                        title: Text(
+                          m.name,
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                        ),
+                        subtitle: Text(m.location, style: const TextStyle(fontSize: 11)),
+                        onTap: () {
+                          setD(() {
+                            nameCtrl.text = m.name;
+                            locCtrl.text = m.location;
+                          });
+                        },
+                      ),
+                    ),
+                ],
+
+                if (savedMarkets.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Mercados usados recentemente:',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.secondaryText,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final sm in savedMarkets)
+                        ActionChip(
+                          backgroundColor: AppTheme.lightGreen,
+                          label: Text(
+                            sm['name'] ?? '',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.primaryDarkGreen,
+                            ),
+                          ),
+                          onPressed: () {
+                            setD(() {
+                              nameCtrl.text = sm['name'] ?? '';
+                              locCtrl.text = sm['location'] ?? '';
+                            });
+                          },
+                        ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                await db.setCurrentMarket(nameCtrl.text, locCtrl.text);
+                if (ctx.mounted) Navigator.pop(ctx);
+                await _load();
+              },
+              child: const Text('Salvar Mercado'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Gera e sincroniza os dados da vitrine de preços e mercados para o site
+  Future<void> _openSiteSyncDialog() async {
+    final jsonStr = await SiteSyncService.buildVitrineJson();
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.creamBackground,
+        title: const Row(
+          children: [
+            Icon(Icons.public, color: AppTheme.primaryDarkGreen),
+            SizedBox(width: 8),
+            Expanded(child: Text('Atualizar Vitrine do Site')),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.lightGreen,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  '✅ Os preços atuais, histórico de até 1 mês atrás, mercados e fotos dos produtos foram preparados em "vitrine_dados.json"!',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.primaryDarkGreen,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'O arquivo foi salvo na pasta Downloads do celular (/sdcard/Download/vitrine_dados.json). Você também pode copiar os dados abaixo para atualizar o site pelo Termux:',
+                style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: jsonStr));
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Dados copiados para a área de transferência!')),
+                );
+              }
+            },
+            child: const Text('Copiar Dados'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Concluir'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Diálogo de adicionar ou editar produto manualmente
+  Future<void> _editItem([ShoppingItem? old]) async {
+    final name = TextEditingController(text: old?.name ?? '');
     final qty = TextEditingController(text: formatQuantity(old?.quantity ?? 1));
-    final initialPrice = suggestion?.priceCents ?? old?.actualUnitPriceCents ?? old?.unitPriceCents ?? 0;
+    final initialPrice = old?.actualUnitPriceCents ?? old?.unitPriceCents ?? 0;
     final price = TextEditingController(text: initialPrice > 0 ? centsToInput(initialPrice) : '');
     String unit = old?.unit ?? 'un';
     String category = old?.category ??
@@ -109,33 +911,6 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (suggestion != null) ...[
-                  if (suggestion.priceCents == null)
-                    const Text(
-                      'Nenhum preço encontrado na foto. Digite manualmente se desejar.',
-                      style: TextStyle(color: AppTheme.alertRed, fontWeight: FontWeight.w600, fontSize: 13),
-                    )
-                  else if (suggestion.ambiguous)
-                    const Text(
-                      'Encontrei mais de um preço. Toque no correto:',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                    ),
-                  if (suggestion.candidates.length > 1) ...[
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        for (final c in suggestion.candidates)
-                          ActionChip(
-                            backgroundColor: AppTheme.lightGreen,
-                            label: Text(formatCents(c)),
-                            onPressed: () => setD(() => price.text = centsToInput(c)),
-                          ),
-                      ],
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                ],
                 TextField(
                   controller: name,
                   autofocus: old == null,
@@ -157,9 +932,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
                   value: category,
-                  decoration: const InputDecoration(
-                    labelText: 'Categoria',
-                  ),
+                  decoration: const InputDecoration(labelText: 'Categoria'),
                   items: ProductCategory.all
                       .map((c) => DropdownMenuItem(
                             value: c,
@@ -248,6 +1021,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     actualUnitPriceCents: parsedPrice > 0 ? parsedPrice : old?.actualUnitPriceCents,
                     category: category,
                     boughtQuantity: old?.boughtQuantity ?? 0.0,
+                    imagePath: old?.imagePath,
+                    marketName: old?.marketName,
                   ),
                 );
               },
@@ -280,163 +1055,6 @@ class _HomeScreenState extends State<HomeScreen> {
       boughtQuantity: item.isBought ? next : item.boughtQuantity,
     ));
     await _load();
-  }
-
-  /// Ícone de câmera dentro do cartão do produto:
-  /// Fotografa o preço na prateleira e registra o valor automaticamente no item!
-  Future<void> _scanItemPriceAutomatically(ShoppingItem item) async {
-    XFile? image;
-    try {
-      image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 85);
-    } on PlatformException catch (e) {
-      if (!mounted) return;
-      final denied = e.code.contains('denied');
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(denied
-            ? 'Sem permissão da câmera. Ative nas configurações do celular.'
-            : 'Não foi possível abrir a câmera: ${e.message ?? e.code}'),
-      ));
-      return;
-    }
-    if (image == null) return;
-
-    try {
-      final suggestion = await OcrService.readImage(image.path);
-      if (!mounted) return;
-
-      final detectedPrice = suggestion.priceCents ??
-          (suggestion.candidates.isNotEmpty ? suggestion.candidates.first : null);
-
-      if (detectedPrice != null && detectedPrice > 0) {
-        final updated = item.copyWith(
-          unitPriceCents: detectedPrice,
-          actualUnitPriceCents: detectedPrice,
-          isBought: true,
-          boughtQuantity: item.quantity,
-        );
-        await db.saveItem(updated);
-        await _load();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppTheme.primaryDarkGreen,
-            content: Text(
-              '✅ Preço ${formatCents(detectedPrice)} salvo automaticamente em "${item.name}"!',
-            ),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Não encontrei o preço na foto. Digite o valor abaixo.'),
-          ),
-        );
-        await _quickManualPriceDialog(item);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao ler foto: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _quickManualPriceDialog(ShoppingItem item) async {
-    final ctrl = TextEditingController(
-      text: item.effectiveUnitPriceCents > 0 ? centsToInput(item.effectiveUnitPriceCents) : '',
-    );
-    final val = await showDialog<int>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.creamBackground,
-        title: Text('Preço de ${item.name}'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Preço unitário (R\$)'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, parseMoneyToCents(ctrl.text)),
-            child: const Text('Salvar preço'),
-          ),
-        ],
-      ),
-    );
-    if (val != null && val > 0) {
-      await db.saveItem(item.copyWith(
-        unitPriceCents: val,
-        actualUnitPriceCents: val,
-        isBought: true,
-        boughtQuantity: item.quantity,
-      ));
-      await _load();
-    }
-  }
-
-  /// Botão Fotografar do topo
-  Future<void> _scanGeneral() async {
-    XFile? image;
-    try {
-      image = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 85);
-    } on PlatformException catch (e) {
-      if (!mounted) return;
-      final denied = e.code.contains('denied');
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(denied
-            ? 'Sem permissão da câmera. Ative nas configurações do celular.'
-            : 'Não foi possível abrir a câmera: ${e.message ?? e.code}'),
-      ));
-      return;
-    }
-    if (image == null) return;
-
-    try {
-      final suggestion = await OcrService.readImage(image.path);
-      if (!mounted) return;
-
-      if (suggestion.text.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Não foi possível ler o texto. Tente outra foto.')),
-        );
-        return;
-      }
-
-      final matchResult = ProductMatcher.match(suggestion, activeItems);
-      if ((matchResult.confidence == MatchConfidence.exact ||
-              matchResult.confidence == MatchConfidence.high) &&
-          matchResult.bestItem != null &&
-          suggestion.priceCents != null) {
-        final matched = matchResult.bestItem!;
-        final updated = matched.copyWith(
-          unitPriceCents: suggestion.priceCents!,
-          actualUnitPriceCents: suggestion.priceCents!,
-          isBought: true,
-          boughtQuantity: matched.quantity,
-        );
-        await db.saveItem(updated);
-        await _load();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppTheme.primaryDarkGreen,
-            content: Text(
-              '✅ "${matched.name}" atualizado com o preço ${formatCents(suggestion.priceCents!)}!',
-            ),
-          ),
-        );
-        return;
-      }
-
-      await _editItem(null, suggestion);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Falha na leitura: $e')));
-      }
-    }
   }
 
   Future<void> _replace(ShoppingItem item) async {
@@ -489,7 +1107,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await _load();
   }
 
-  /// Diálogo de Orçamento da Lista com o visual do Redesign
   Future<void> _budgetDialog() async {
     final controller = TextEditingController(text: budget > 0 ? centsToInput(budget) : '');
     final spentRatio = budget > 0 ? (boughtTotal / budget).clamp(0.0, 1.0) : 0.0;
@@ -556,32 +1173,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: boughtTotal > budget ? AppTheme.alertRed : AppTheme.accentGreen,
                         ),
                       ),
-                      const SizedBox(height: 10),
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppTheme.lightGreen,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.eco, size: 18, color: AppTheme.primaryDarkGreen),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                boughtTotal > budget
-                                    ? 'Atenção: orçamento ultrapassado em ${formatCents(boughtTotal - budget)}.'
-                                    : 'Dica: Você está dentro do orçamento!',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppTheme.primaryDarkGreen,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -614,7 +1205,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Finaliza a compra e exibe a tela de comprovante com o Total Gasto e a Data de Hoje
   Future<void> _confirmAndShowReceiptScreen() async {
     final selectedItems = activeItems.where((i) => i.isFullyBought || i.isPartiallyBought).toList();
     if (selectedItems.isEmpty) {
@@ -635,6 +1225,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await db.finishPurchase();
       await _load();
+      SiteSyncService.buildVitrineJson();
       if (!mounted) return;
 
       await showDialog<void>(
@@ -672,6 +1263,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     color: AppTheme.primaryDarkGreen,
                   ),
                 ),
+                if (currentMarketName.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '📍 $currentMarketName${currentMarketLocation.isNotEmpty ? ' ($currentMarketLocation)' : ''}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.accentGreen,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 18),
                 Container(
                   padding: const EdgeInsets.all(20),
@@ -743,14 +1346,24 @@ class _HomeScreenState extends State<HomeScreen> {
                     margin: const EdgeInsets.only(bottom: 8),
                     decoration: AppTheme.cardDecoration(radius: 14, withShadow: false),
                     child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: AppTheme.lightGreen,
-                        child: Icon(
-                          ProductCategory.iconFor(it.category),
-                          color: AppTheme.primaryDarkGreen,
-                          size: 20,
-                        ),
-                      ),
+                      leading: it.imagePath != null && File(it.imagePath!).existsSync()
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Image.file(
+                                File(it.imagePath!),
+                                width: 44,
+                                height: 44,
+                                fit: BoxFit.cover,
+                              ),
+                            )
+                          : CircleAvatar(
+                              backgroundColor: AppTheme.lightGreen,
+                              child: Icon(
+                                ProductCategory.iconFor(it.category),
+                                color: AppTheme.primaryDarkGreen,
+                                size: 20,
+                              ),
+                            ),
                       title: Text(
                         it.name,
                         style: const TextStyle(
@@ -778,18 +1391,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   icon: const Icon(Icons.check),
                   label: const Text('Concluir e Voltar ao Início'),
                 ),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const HistoryScreen()),
-                    );
-                  },
-                  icon: const Icon(Icons.history),
-                  label: const Text('Ver no Histórico de Compras'),
-                ),
               ],
             ),
           ),
@@ -802,13 +1403,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Constrói um cartão de produto elegante, branco, com borda discreta,
-  /// controles de quantidade [-] 1 un [+], botão de câmera para preço e menu
+  /// Cartão do Produto na Página Principal:
+  /// Mostra a FOTO DO PRODUTO visível (clicável para ampliar com nitidez!),
+  /// controles de quantidade [-] 1 kg [+] e o botão de câmera que abre a janela de 2 quadrados!
   Widget _buildProductCard(ShoppingItem item) {
     final replaced = item.replacedBy != null;
     final catColor = ProductCategory.colorFor(item.category);
     final catIcon = ProductCategory.iconFor(item.category);
     final unitPrice = item.actualUnitPriceCents ?? item.unitPriceCents;
+    final hasPhoto = item.imagePath != null && File(item.imagePath!).existsSync();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -820,7 +1423,6 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Checkbox de seleção
                 if (replaced)
                   const Padding(
                     padding: EdgeInsets.all(8),
@@ -832,16 +1434,51 @@ class _HomeScreenState extends State<HomeScreen> {
                     onChanged: (v) => _toggleItemCheckbox(item, v ?? false),
                   ),
 
-                // Miniatura / Ícone da categoria estilizado
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: catColor.withOpacity(0.10),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppTheme.subtleBorder),
+                // MINIATURA VISÍVEL DA FOTO DO PRODUTO (Toque para ver grande e nítida!)
+                GestureDetector(
+                  onTap: hasPhoto
+                      ? () => _showFullProductImageDialog(item)
+                      : () => _openTwoSquareCameraModal(item),
+                  child: Stack(
+                    children: [
+                      Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: catColor.withOpacity(0.10),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: hasPhoto ? AppTheme.accentGreen : AppTheme.subtleBorder,
+                            width: hasPhoto ? 1.5 : 1.0,
+                          ),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: hasPhoto
+                            ? Image.file(
+                                File(item.imagePath!),
+                                fit: BoxFit.cover,
+                              )
+                            : Icon(catIcon, color: catColor, size: 26),
+                      ),
+                      if (hasPhoto)
+                        Positioned(
+                          right: 2,
+                          bottom: 2,
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.65),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Icon(
+                              Icons.zoom_in,
+                              size: 13,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-                  child: Icon(catIcon, color: catColor, size: 24),
                 ),
                 const SizedBox(width: 12),
 
@@ -941,11 +1578,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
 
-                // Menu de 3 pontos (Editar, Trocar, Excluir)
+                // Menu de opções
                 if (!replaced)
                   PopupMenuButton<String>(
                     icon: const Icon(Icons.more_vert, color: AppTheme.secondaryText),
                     onSelected: (v) async {
+                      if (v == 'view_photo' && hasPhoto) {
+                        await _showFullProductImageDialog(item);
+                      }
+                      if (v == 'camera') await _openTwoSquareCameraModal(item);
                       if (v == 'edit') await _editItem(item);
                       if (v == 'replace') await _replace(item);
                       if (v == 'delete') {
@@ -974,103 +1615,127 @@ class _HomeScreenState extends State<HomeScreen> {
                         }
                       }
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'edit', child: Text('Detalhes / Editar')),
-                      PopupMenuItem(value: 'replace', child: Text('Trocar produto')),
-                      PopupMenuItem(value: 'delete', child: Text('Remover da lista')),
+                    itemBuilder: (_) => [
+                      if (hasPhoto)
+                        const PopupMenuItem(value: 'view_photo', child: Text('Ver foto ampliada')),
+                      const PopupMenuItem(value: 'camera', child: Text('Fotografar preço / produto')),
+                      const PopupMenuItem(value: 'edit', child: Text('Detalhes / Editar')),
+                      const PopupMenuItem(value: 'replace', child: Text('Trocar produto')),
+                      const PopupMenuItem(value: 'delete', child: Text('Remover da lista')),
                     ],
                   ),
               ],
             ),
 
-            // Linha inferior de controles do cartão: Cápsula [-] 1 kg [+] e botão [📷 Preço]
+            // Controles inferiores: Cápsula [-] 1 kg [+] e Botão de Câmera (abre os 2 quadradinhos!)
             if (!replaced) ...[
               const SizedBox(height: 8),
               Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Cápsula de Quantidade [-] 1 kg [+]
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: AppTheme.creamBackground,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: AppTheme.subtleBorder),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: nextQuantity(item.quantity, item.unit, -1) == null
-                              ? null
-                              : () => _changeQuantity(item, -1),
-                          child: Padding(
-                            padding: const EdgeInsets.all(6),
-                            child: Icon(
-                              Icons.remove,
-                              size: 16,
-                              color: nextQuantity(item.quantity, item.unit, -1) == null
-                                  ? AppTheme.subtleBorder
-                                  : AppTheme.primaryText,
-                            ),
+                  if (hasPhoto)
+                    InkWell(
+                      onTap: () => _showFullProductImageDialog(item),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        child: Text(
+                          '🔍 Toque na foto p/ ampliar',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.accentGreen,
                           ),
                         ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          child: Text(
-                            '${formatQuantity(item.quantity)} ${item.unit}',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: AppTheme.primaryText,
-                            ),
-                          ),
+                      ),
+                    )
+                  else
+                    const SizedBox.shrink(),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppTheme.creamBackground,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: AppTheme.subtleBorder),
                         ),
-                        InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () => _changeQuantity(item, 1),
-                          child: const Padding(
-                            padding: EdgeInsets.all(6),
-                            child: Icon(
-                              Icons.add,
-                              size: 16,
-                              color: AppTheme.primaryDarkGreen,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: nextQuantity(item.quantity, item.unit, -1) == null
+                                  ? null
+                                  : () => _changeQuantity(item, -1),
+                              child: Padding(
+                                padding: const EdgeInsets.all(6),
+                                child: Icon(
+                                  Icons.remove,
+                                  size: 16,
+                                  color: nextQuantity(item.quantity, item.unit, -1) == null
+                                      ? AppTheme.subtleBorder
+                                      : AppTheme.primaryText,
+                                ),
+                              ),
                             ),
-                          ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 10),
+                              child: Text(
+                                '${formatQuantity(item.quantity)} ${item.unit}',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.primaryText,
+                                ),
+                              ),
+                            ),
+                            InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () => _changeQuantity(item, 1),
+                              child: const Padding(
+                                padding: EdgeInsets.all(6),
+                                child: Icon(
+                                  Icons.add,
+                                  size: 16,
+                                  color: AppTheme.primaryDarkGreen,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
+                      ),
+                      const SizedBox(width: 8),
 
-                  // Ícone de Câmera dentro do quadrado do item para ler o preço automaticamente
-                  InkWell(
-                    borderRadius: BorderRadius.circular(20),
-                    onTap: () => _scanItemPriceAutomatically(item),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                      decoration: BoxDecoration(
-                        color: AppTheme.lightGreen,
+                      // Ícone de Câmera dentro do quadrado do item: abre os 2 quadradinhos (Preço e Foto)
+                      InkWell(
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: AppTheme.accentGreen.withOpacity(0.3)),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.camera_alt, size: 16, color: AppTheme.primaryDarkGreen),
-                          SizedBox(width: 5),
-                          Text(
-                            'Preço',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: AppTheme.primaryDarkGreen,
-                            ),
+                        onTap: () => _openTwoSquareCameraModal(item),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: AppTheme.lightGreen,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: AppTheme.accentGreen.withOpacity(0.3)),
                           ),
-                        ],
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.camera_alt, size: 16, color: AppTheme.primaryDarkGreen),
+                              SizedBox(width: 5),
+                              Text(
+                                'Foto/Preço',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.primaryDarkGreen,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ],
               ),
@@ -1081,8 +1746,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Constrói a Tela Principal "Minha Lista" com o Banner Fotográfico do Supermercado,
-  /// Cartão de Resumo Financeiro em 2 colunas, Botões Arredondados e Filtros de Categoria
   Widget _buildMainTab() {
     final screenHeight = MediaQuery.of(context).size.height;
     final bannerHeight = (screenHeight * 0.23).clamp(175.0, 230.0);
@@ -1092,13 +1755,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final boughtDistinct = activeItems.where((i) => i.isFullyBought).length;
     final remainingDistinct = totalDistinct - boughtDistinct;
 
-    // Progresso: se houver orçamento definido, exibe quanto do orçamento já foi utilizado;
-    // se não houver orçamento definido, exibe o progresso de conclusão dos itens.
     final progressRatio = budget > 0
         ? (total / budget).clamp(0.0, 1.0)
         : (totalDistinct == 0 ? 0.0 : (boughtDistinct / totalDistinct).clamp(0.0, 1.0));
     final progressPercentage = (progressRatio * 100).round();
 
+    // IMPORTANTE: items já vem ordenado por `id DESC` do banco, garantindo que
+    // TODO item recém-adicionado fique sempre no TOPO da lista!
     final filteredItems = _selectedCategoryFilter == 'Todos'
         ? items
         : items.where((i) => i.category == _selectedCategoryFilter).toList();
@@ -1109,11 +1772,10 @@ class _HomeScreenState extends State<HomeScreen> {
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
-          // 1. BANNER FOTOGRÁFICO DO SUPERMERCADO + CARTÃO DE RESUMO FINANCEIRO SOBREPOSTO
+          // 1. BANNER FOTOGRÁFICO + CARTÃO DE RESUMO FINANCEIRO
           Stack(
             clipBehavior: Clip.none,
             children: [
-              // Imagem de fundo em banner horizontal (~22% da altura da tela)
               SizedBox(
                 height: bannerHeight,
                 width: double.infinity,
@@ -1134,7 +1796,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                     ),
-                    // Camada de gradiente suave para legibilidade perfeita do título e ícones
                     Container(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
@@ -1152,7 +1813,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // Cabeçalho com título "Compras Inteligentes" e ícones de ação
               SafeArea(
                 bottom: false,
                 child: Padding(
@@ -1164,7 +1824,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           'Compras Inteligentes',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 23,
+                            fontSize: 22,
                             fontWeight: FontWeight.w800,
                             letterSpacing: -0.3,
                             shadows: [
@@ -1175,6 +1835,18 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ],
                           ),
+                        ),
+                      ),
+                      Container(
+                        margin: const EdgeInsets.only(right: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.28),
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          tooltip: 'Publicar preços no site',
+                          icon: const Icon(Icons.public, color: Colors.white),
+                          onPressed: _openSiteSyncDialog,
                         ),
                       ),
                       Container(
@@ -1214,7 +1886,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // Cartão de Resumo Financeiro posicionado na base do banner
               Padding(
                 padding: EdgeInsets.fromLTRB(16, bannerHeight - 48, 16, 0),
                 child: Container(
@@ -1224,7 +1895,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        // Coluna Esquerda: Total da lista + Orçamento + Barra de progresso
                         Expanded(
                           flex: 5,
                           child: Column(
@@ -1311,15 +1981,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         ),
-
-                        // Divisor Vertical Discreto
                         Container(
                           width: 1,
                           margin: const EdgeInsets.symmetric(horizontal: 14),
                           color: AppTheme.subtleBorder,
                         ),
-
-                        // Coluna Direita: Comprado, Pendente, Concluídos, Pendentes
                         Expanded(
                           flex: 5,
                           child: Column(
@@ -1418,13 +2084,48 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
 
-          // 2. CORPO DA TELA EM FUNDO CREME (#FAF7F0)
+          // 2. CORPO DA TELA PRINCIPAL
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Botões Principais: [+ Adicionar] e [📷 Fotografar] lado a lado
+                // Barra de Localização / Mercado Atual
+                InkWell(
+                  onTap: _openMarketLocationDialog,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.lightGreen,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppTheme.subtleBorder),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.location_on, size: 18, color: AppTheme.primaryDarkGreen),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            currentMarketName.isEmpty
+                                ? 'Toque p/ buscar sua localização e definir o mercado'
+                                : '$currentMarketName${currentMarketLocation.isNotEmpty ? ' • $currentMarketLocation' : ''}',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.primaryDarkGreen,
+                            ),
+                          ),
+                        ),
+                        const Icon(Icons.my_location, size: 16, color: AppTheme.accentGreen),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Botões Principais: [+ Adicionar] e [📷 Fotografar]
                 Row(
                   children: [
                     Expanded(
@@ -1454,7 +2155,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             borderRadius: BorderRadius.circular(24),
                           ),
                         ),
-                        onPressed: _scanGeneral,
+                        onPressed: () => _openTwoSquareCameraModal(),
                         icon: const Icon(Icons.camera_alt_outlined, size: 20),
                         label: const Text('Fotografar'),
                       ),
@@ -1463,7 +2164,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 10),
 
-                // Botão Principal Secundário de Largura Total: [✓ Finalizar compra]
+                // Botão: [✓ Finalizar compra]
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
@@ -1491,9 +2192,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
 
-                // Barra de Filtros de Categorias (Todos, Carnes, Laticínios, Limpeza...)
+                // Barra de Filtros de Categorias
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -1561,7 +2262,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
 
-                // Estado Vazio
                 if (activeItems.isEmpty)
                   Container(
                     width: double.infinity,
@@ -1592,7 +2292,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(height: 4),
                         const Text(
-                          'Toque em "Adicionar" para montar sua lista de supermercado.',
+                          'Toque em "Adicionar" ou "Fotografar" para montar sua lista.',
                           textAlign: TextAlign.center,
                           style: TextStyle(fontSize: 13, color: AppTheme.secondaryText),
                         ),
@@ -1600,7 +2300,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
 
-                // Cartões dos Produtos
+                // Cartões dos Produtos (Itens recém-adicionados SEMPRE no topo!)
                 for (final item in filteredItems) _buildProductCard(item),
               ],
             ),
@@ -1666,7 +2366,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Scaffold(
-      // Na aba 0 ("Minha Lista"), o cabeçalho faz parte do banner fotográfico de supermercado
       appBar: _currentTabIndex == 0
           ? null
           : AppBar(
@@ -1674,6 +2373,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 _currentTabIndex == 1 ? 'Faltam Comprar' : 'Próximo Item',
               ),
               actions: [
+                IconButton(
+                  tooltip: 'Publicar preços no site',
+                  onPressed: _openSiteSyncDialog,
+                  icon: const Icon(Icons.public),
+                ),
                 IconButton(
                   tooltip: 'Comparador',
                   onPressed: () => Navigator.push(
@@ -1702,14 +2406,12 @@ class _HomeScreenState extends State<HomeScreen> {
           PendingTab(
             items: items,
             onConfirmPurchase: (item) => _toggleItemCheckbox(item, !item.isFullyBought),
-            onScanItem: (target) =>
-                target != null ? _scanItemPriceAutomatically(target) : _scanGeneral(),
+            onScanItem: (target) => _openTwoSquareCameraModal(target),
           ),
           NextItemTab(
             items: items,
             onConfirmPurchase: (item) => _toggleItemCheckbox(item, true),
-            onScanItem: (target) =>
-                target != null ? _scanItemPriceAutomatically(target) : _scanGeneral(),
+            onScanItem: (target) => _openTwoSquareCameraModal(target),
             onFinishPurchase: _confirmAndShowReceiptScreen,
           ),
         ],
