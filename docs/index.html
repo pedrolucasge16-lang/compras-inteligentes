@@ -22,8 +22,18 @@
   </style>
 </head>
 <body class="min-h-screen flex flex-col justify-between">
-  <!-- HERO BANNER COM A FOTO DO SUPERMERCADO -->
-  <header class="hero-bg pt-10 pb-24 px-4 sm:px-6 text-center">
+  <!-- HERO BANNER -->
+  <header class="hero-bg pt-8 pb-24 px-4 sm:px-6 text-center relative">
+    <div class="max-w-5xl mx-auto flex justify-end mb-2">
+      <button
+        id="btn-admin-access"
+        type="button"
+        class="px-3.5 py-1.5 rounded-full bg-black/45 hover:bg-black/65 text-white text-xs font-bold backdrop-blur-sm border border-white/25 transition flex items-center gap-1.5"
+      >
+        <span id="admin-access-label">🔒 Área do Admin</span>
+      </button>
+    </div>
+
     <div class="max-w-5xl mx-auto">
       <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#E7F0E6] text-[#245C46] text-xs font-extrabold tracking-wide uppercase mb-3 shadow-sm">
         <span>🛒 App Android + Radar de Preços de Supermercados</span>
@@ -32,12 +42,81 @@
         Compras Inteligentes
       </h1>
       <p class="mt-3 text-sm sm:text-base text-white/95 max-w-xl mx-auto font-medium drop-shadow">
-        Baixe o aplicativo oficial e confira abaixo quais supermercados estão mais baratos, com as fotos reais dos produtos, preços de agora e histórico de até 1 mês atrás.
+        Baixe o aplicativo oficial e veja quais mercados estão mais baratos, com fotos dos produtos, preços de agora e histórico de até 1 mês atrás.
       </p>
     </div>
   </header>
 
   <main class="max-w-5xl w-full mx-auto px-4 sm:px-6 -mt-16 pb-16 flex-1 space-y-8">
+    <!-- PAINEL DO ADMINISTRADOR (OCULTO PARA VISITANTES — SÓ APARECE APÓS LOGIN COM SENHA!) -->
+    <section
+      id="owner-toolbar"
+      class="hidden bg-[#245C46] text-white rounded-3xl p-5 shadow-lg border border-[#387653] space-y-4"
+    >
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <span class="text-[11px] uppercase tracking-wider font-extrabold text-[#E7F0E6] block">Sessão Autenticada como Dono</span>
+          <h2 class="text-lg font-extrabold">👑 Painel do Administrador</h2>
+          <p class="text-xs text-[#E7F0E6]/90 mt-0.5">
+            Somente você com sua senha tem acesso a este painel para postar, editar ou apagar produtos.
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            id="btn-owner-add"
+            type="button"
+            class="px-4 py-2.5 rounded-xl bg-white text-[#245C46] hover:bg-[#E7F0E6] font-extrabold text-xs shadow-sm transition"
+          >
+            ➕ Postar Produto / Preço
+          </button>
+          <label
+            for="file-import-json"
+            class="cursor-pointer px-3.5 py-2.5 rounded-xl bg-[#387653] hover:bg-[#387653]/80 text-white font-bold text-xs border border-white/20 transition inline-flex items-center gap-1"
+          >
+            <span>📂 Importar JSON do App</span>
+          </label>
+          <input id="file-import-json" type="file" accept=".json,application/json" class="hidden" />
+          <button
+            id="btn-owner-publish-gh"
+            type="button"
+            class="px-4 py-2.5 rounded-xl bg-[#E99A52] hover:bg-[#E99A52]/90 text-white font-extrabold text-xs shadow-sm transition"
+          >
+            ☁️ Publicar Direto no GitHub
+          </button>
+          <button
+            id="btn-owner-export"
+            type="button"
+            class="px-3 py-2.5 rounded-xl bg-black/25 hover:bg-black/40 text-white font-bold text-xs transition"
+          >
+            💾 Baixar JSON
+          </button>
+          <button
+            id="btn-owner-change-pass"
+            type="button"
+            class="px-3 py-2.5 rounded-xl bg-black/25 hover:bg-black/40 text-white font-bold text-xs transition"
+          >
+            🔑 Trocar Senha
+          </button>
+          <button
+            id="btn-owner-clear-all"
+            type="button"
+            class="px-3 py-2.5 rounded-xl bg-[#C94C4C] hover:bg-[#C94C4C]/90 text-white font-bold text-xs transition"
+          >
+            🗑️ Zerar Vitrine
+          </button>
+          <button
+            id="btn-owner-logout"
+            type="button"
+            class="px-3 py-2.5 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-xs transition"
+          >
+            🚪 Sair
+          </button>
+        </div>
+      </div>
+
+      <div id="admin-feedback-banner" class="hidden p-3 rounded-xl bg-white/15 text-xs font-bold text-[#E7F0E6]"></div>
+    </section>
+
     <!-- 1. CARTÃO DE DOWNLOAD DO APLICATIVO -->
     <section class="bg-white rounded-3xl p-6 sm:p-8 shadow-lg border border-[#E5E0D7]">
       <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
@@ -110,33 +189,22 @@
 
     <!-- 2. RANKING DOS MERCADOS MAIS BARATOS -->
     <section class="space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
-        <div>
-          <span class="text-xs font-extrabold uppercase tracking-wider text-[#387653]">Comparativo por Localização</span>
-          <h2 class="text-2xl font-extrabold text-[#292D2A]">🏆 Quais Mercados Estão Mais Baratos</h2>
-        </div>
-        <div class="flex items-center gap-2">
-          <label
-            for="file-import-json"
-            class="cursor-pointer px-3.5 py-2 rounded-xl bg-white border border-[#E5E0D7] hover:border-[#245C46] text-xs font-bold text-[#245C46] shadow-sm transition inline-flex items-center gap-1.5"
-          >
-            <span>📂 Carregar vitrine_dados.json do App</span>
-          </label>
-          <input id="file-import-json" type="file" accept=".json,application/json" class="hidden" />
-        </div>
+      <div>
+        <span class="text-xs font-extrabold uppercase tracking-wider text-[#387653]">Comparativo por Localização</span>
+        <h2 class="text-2xl font-extrabold text-[#292D2A]">🏆 Quais Mercados Estão Mais Baratos</h2>
       </div>
 
       <div id="markets-ranking-grid" class="grid grid-cols-1 md:grid-cols-3 gap-4"></div>
     </section>
 
-    <!-- 3. VITRINE VISUAL DE PRODUTOS E HISTÓRICO DE PREÇOS (ATÉ 1 MÊS ATRÁS) -->
+    <!-- 3. VITRINE VISUAL DE PRODUTOS E HISTÓRICO DE PREÇOS -->
     <section class="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-[#E5E0D7] space-y-6">
       <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E5E0D7] pb-5">
         <div>
-          <span class="text-xs font-extrabold uppercase tracking-wider text-[#E99A52]">Histórico Real alimentado pelo App</span>
+          <span class="text-xs font-extrabold uppercase tracking-wider text-[#E99A52]">Histórico de Preços</span>
           <h2 class="text-2xl font-extrabold text-[#292D2A]">📸 Produtos, Fotos e Preços (Agora vs. 1 Mês Atrás)</h2>
           <p class="text-xs text-[#747A75] mt-1">
-            Toque em qualquer foto de produto para ampliá-la em alta definição.
+            Toque na foto de qualquer produto para ampliá-la em alta definição.
           </p>
         </div>
 
@@ -152,7 +220,7 @@
       </div>
 
       <!-- Filtros de Mercado e Categoria -->
-      <div class="space-y-3">
+      <div class="space-y-3" id="filters-container">
         <div class="flex items-center gap-2 overflow-x-auto pb-1" id="market-filter-bar"></div>
         <div class="flex items-center gap-2 overflow-x-auto pb-1" id="category-filter-bar"></div>
       </div>
@@ -161,6 +229,307 @@
       <div id="products-showcase-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
     </section>
   </main>
+
+  <!-- MODAL DE LOGIN DO ADMINISTRADOR (COM USUÁRIO E SENHA) -->
+  <div
+    id="login-admin-modal"
+    class="hidden fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
+  >
+    <div class="bg-[#FAF7F0] rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl border border-[#E5E0D7]">
+      <div class="bg-[#245C46] text-white px-5 py-4 flex items-center justify-between">
+        <h3 class="font-extrabold text-base flex items-center gap-2">
+          <span>🔒 Login do Administrador</span>
+        </h3>
+        <button
+          id="btn-close-login-modal"
+          type="button"
+          class="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white font-bold"
+        >
+          ✕
+        </button>
+      </div>
+
+      <form id="form-admin-login" class="p-5 space-y-4 text-xs sm:text-sm">
+        <p class="text-xs text-[#747A75]">
+          Acesso restrito ao dono do aplicativo para editar, apagar ou postar produtos na vitrine.
+        </p>
+
+        <div>
+          <label class="font-bold text-[#292D2A] block mb-1">Usuário</label>
+          <input
+            id="input-admin-user"
+            type="text"
+            required
+            placeholder="Digite seu usuário"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E5E0D7] font-semibold focus:outline-none focus:border-[#245C46]"
+          />
+        </div>
+
+        <div>
+          <label class="font-bold text-[#292D2A] block mb-1">Senha de Administrador</label>
+          <input
+            id="input-admin-pass"
+            type="password"
+            required
+            placeholder="Digite sua senha"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E5E0D7] font-semibold focus:outline-none focus:border-[#245C46]"
+          />
+        </div>
+
+        <div id="login-error-msg" class="hidden p-2.5 rounded-xl bg-[#FDECEC] text-[#C94C4C] text-xs font-bold text-center">
+          ❌ Usuário ou senha incorretos!
+        </div>
+
+        <div class="pt-2 flex items-center justify-end gap-2">
+          <button
+            id="btn-cancel-login"
+            type="button"
+            class="px-4 py-2.5 rounded-xl text-[#747A75] font-bold hover:bg-black/5"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            class="px-5 py-2.5 rounded-xl bg-[#245C46] hover:bg-[#387653] text-white font-extrabold shadow-sm"
+          >
+            Entrar como Admin
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL PARA TROCAR SENHA DO ADMIN -->
+  <div
+    id="change-pass-modal"
+    class="hidden fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
+  >
+    <div class="bg-[#FAF7F0] rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl border border-[#E5E0D7]">
+      <div class="bg-[#245C46] text-white px-5 py-4 flex items-center justify-between">
+        <h3 class="font-extrabold text-base">🔑 Definir Nova Senha de Admin</h3>
+        <button
+          id="btn-close-pass-modal"
+          type="button"
+          class="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white font-bold"
+        >
+          ✕
+        </button>
+      </div>
+      <form id="form-change-pass" class="p-5 space-y-4 text-xs sm:text-sm">
+        <div>
+          <label class="font-bold text-[#292D2A] block mb-1">Nova Senha</label>
+          <input
+            id="input-new-pass"
+            type="password"
+            required
+            placeholder="Digite a nova senha"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E5E0D7] font-semibold focus:outline-none focus:border-[#245C46]"
+          />
+        </div>
+        <div class="flex items-center justify-end gap-2">
+          <button
+            id="btn-cancel-pass"
+            type="button"
+            class="px-4 py-2.5 rounded-xl text-[#747A75] font-bold"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            class="px-5 py-2.5 rounded-xl bg-[#245C46] text-white font-extrabold"
+          >
+            Salvar Senha
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL PARA EDITAR OU ADICIONAR PRODUTO (EXCLUSIVO DO ADMIN LOGADO) -->
+  <div
+    id="edit-product-modal"
+    class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 overflow-y-auto"
+  >
+    <div class="bg-[#FAF7F0] rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-[#E5E0D7] my-8">
+      <div class="bg-[#245C46] text-white px-5 py-4 flex items-center justify-between">
+        <h3 id="edit-modal-heading" class="font-extrabold text-base">✏️ Editar Produto da Vitrine</h3>
+        <button
+          id="btn-close-edit-modal"
+          type="button"
+          class="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white font-bold"
+        >
+          ✕
+        </button>
+      </div>
+
+      <form id="form-edit-product" class="p-5 space-y-3.5 text-xs sm:text-sm">
+        <div>
+          <label class="font-bold text-[#292D2A] block mb-1">Nome do Produto</label>
+          <input
+            id="input-prod-name"
+            type="text"
+            required
+            placeholder="Ex: Peito de Frango 1kg"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E5E0D7] font-semibold focus:outline-none focus:border-[#245C46]"
+          />
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="font-bold text-[#292D2A] block mb-1">Categoria</label>
+            <select
+              id="input-prod-category"
+              class="w-full px-3 py-2.5 rounded-xl bg-white border border-[#E5E0D7] font-semibold focus:outline-none focus:border-[#245C46]"
+            >
+              <option value="Carnes">Carnes</option>
+              <option value="Frutas e verduras">Frutas e verduras</option>
+              <option value="Laticínios">Laticínios</option>
+              <option value="Cereais">Cereais</option>
+              <option value="Massas">Massas</option>
+              <option value="Bebidas">Bebidas</option>
+              <option value="Padaria">Padaria</option>
+              <option value="Higiene pessoal">Higiene pessoal</option>
+              <option value="Limpeza">Limpeza</option>
+              <option value="Congelados">Congelados</option>
+              <option value="Outros">Outros</option>
+            </select>
+          </div>
+          <div>
+            <label class="font-bold text-[#292D2A] block mb-1">Unidade</label>
+            <select
+              id="input-prod-unit"
+              class="w-full px-3 py-2.5 rounded-xl bg-white border border-[#E5E0D7] font-semibold focus:outline-none focus:border-[#245C46]"
+            >
+              <option value="un">Unidade (un)</option>
+              <option value="kg">Quilo (kg)</option>
+              <option value="g">Grama (g)</option>
+              <option value="L">Litro (L)</option>
+              <option value="ml">ml</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="font-bold text-[#292D2A] block mb-1">Supermercado</label>
+            <input
+              id="input-prod-market"
+              type="text"
+              required
+              placeholder="Ex: Guanabara"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E5E0D7] font-semibold focus:outline-none focus:border-[#245C46]"
+            />
+          </div>
+          <div>
+            <label class="font-bold text-[#292D2A] block mb-1">Bairro / Cidade</label>
+            <input
+              id="input-prod-location"
+              type="text"
+              placeholder="Ex: Nova Iguaçu, RJ"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E5E0D7] font-semibold focus:outline-none focus:border-[#245C46]"
+            />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="font-bold text-[#245C46] block mb-1">Preço de Agora (R$)</label>
+            <input
+              id="input-prod-curr-price"
+              type="text"
+              required
+              placeholder="Ex: 18,90"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#245C46] font-extrabold text-[#245C46] focus:outline-none"
+            />
+          </div>
+          <div>
+            <label class="font-bold text-[#747A75] block mb-1">Preço até 1 mês atrás (R$)</label>
+            <input
+              id="input-prod-prev-price"
+              type="text"
+              placeholder="Ex: 21,50 (Opcional)"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E5E0D7] font-semibold focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label class="font-bold text-[#292D2A] block mb-1">Foto do Produto (Câmera ou Galeria)</label>
+          <input
+            id="input-prod-photo"
+            type="file"
+            accept="image/*"
+            class="w-full text-xs text-[#747A75] file:mr-3 file:py-2 file:px-3.5 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-[#E7F0E6] file:text-[#245C46]"
+          />
+        </div>
+
+        <div class="pt-3 flex items-center justify-end gap-2 border-t border-[#E5E0D7]">
+          <button
+            id="btn-cancel-edit"
+            type="button"
+            class="px-4 py-2.5 rounded-xl text-[#747A75] font-bold hover:bg-black/5"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            class="px-5 py-2.5 rounded-xl bg-[#245C46] hover:bg-[#387653] text-white font-extrabold shadow-sm"
+          >
+            Salvar Produto
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL DE TOKEN DO GITHUB PARA PUBLICAÇÃO DIRETA -->
+  <div
+    id="gh-token-modal"
+    class="hidden fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
+  >
+    <div class="bg-[#FAF7F0] rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl border border-[#E5E0D7]">
+      <div class="bg-[#245C46] text-white px-5 py-4 flex items-center justify-between">
+        <h3 class="font-extrabold text-base">☁️ Conectar ao seu GitHub</h3>
+        <button
+          id="btn-close-gh-modal"
+          type="button"
+          class="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white font-bold"
+        >
+          ✕
+        </button>
+      </div>
+      <form id="form-gh-token" class="p-5 space-y-4 text-xs sm:text-sm">
+        <p class="text-xs text-[#747A75]">
+          Cole seu Token Pessoal do GitHub (salvo apenas no seu aparelho) para publicar alterações no repositório oficial com 1 clique, sem precisar do Termux:
+        </p>
+        <div>
+          <label class="font-bold text-[#292D2A] block mb-1">Token do GitHub (ghp_...)</label>
+          <input
+            id="input-gh-token"
+            type="password"
+            required
+            placeholder="ghp_..."
+            class="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#E5E0D7] font-semibold focus:outline-none focus:border-[#245C46]"
+          />
+        </div>
+        <div class="flex items-center justify-end gap-2">
+          <button
+            id="btn-cancel-gh"
+            type="button"
+            class="px-4 py-2.5 rounded-xl text-[#747A75] font-bold"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            class="px-5 py-2.5 rounded-xl bg-[#245C46] text-white font-extrabold"
+          >
+            Salvar e Publicar
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- MODAL PARA VER A FOTO DO PRODUTO GRANDE E NÍTIDA -->
   <div
@@ -200,14 +569,17 @@
   </div>
 
   <footer class="text-center py-6 text-xs text-[#747A75] border-t border-[#E5E0D7] bg-white">
-    Compras Inteligentes • Aplicativo Android & Comparador Colaborativo de Supermercados
+    Compras Inteligentes • Aplicativo Android & Comparador de Supermercados
   </footer>
 
   <script>
     (function () {
+      const STORAGE_KEY = "compras_inteligentes_vitrine_v1";
+      const PASS_HASH_KEY = "compras_inteligentes_admin_hash_v1";
+      // Hash SHA-256 padrão para a senha inicial "compras2026" (usuário: "pedro")
+      const DEFAULT_PASS_HASH = "82d7d26592836062c6f186023a01d4774c90cf76c29d6781f90c79e091982909";
       const downloadUrl = "https://github.com/pedrolucasge16-lang/compras-inteligentes/releases/download/v1.0-latest/compras-inteligentes.apk";
 
-      // Gerador de ilustrações SVG nítidas quando o produto não tiver foto em base64
       function makeProductSvgDataUri(title, emoji, bgHex, accentHex) {
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360" viewBox="0 0 480 360">
           <defs>
@@ -225,90 +597,67 @@
         return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
       }
 
-      // Dados iniciais da vitrine (serão substituídos/mesclados automaticamente com vitrine_dados.json do app)
-      let catalogProducts = [
-        {
-          name: "Peito de Frango Resfriado",
-          category: "Carnes",
-          unit: "kg",
-          marketName: "Supermercado Guanabara",
-          marketLocation: "Tijuca - Rio de Janeiro, RJ",
-          currentPriceCents: 1790,
-          currentDate: "2026-11-03T14:20:00",
-          previousPriceCents: 2150,
-          previousDate: "2026-10-08T11:10:00",
-          photoDataUri: makeProductSvgDataUri("Peito de Frango 1kg", "🍗", "#FDECEC", "#C62828")
-        },
-        {
-          name: "Leite Integral 1L",
-          category: "Laticínios",
-          unit: "L",
-          marketName: "Supermercado Guanabara",
-          marketLocation: "Tijuca - Rio de Janeiro, RJ",
-          currentPriceCents: 489,
-          currentDate: "2026-11-03T14:22:00",
-          previousPriceCents: 549,
-          previousDate: "2026-10-10T16:00:00",
-          photoDataUri: makeProductSvgDataUri("Leite Integral 1L", "🥛", "#EBF5FB", "#0277BD")
-        },
-        {
-          name: "Arroz Branco Tipo 1 (5kg)",
-          category: "Cereais",
-          unit: "un",
-          marketName: "Assaí Atacadista",
-          marketLocation: "Maracanã - Rio de Janeiro, RJ",
-          currentPriceCents: 2390,
-          currentDate: "2026-11-02T18:00:00",
-          previousPriceCents: 2690,
-          previousDate: "2026-10-05T15:30:00",
-          photoDataUri: makeProductSvgDataUri("Arroz Tipo 1 (5kg)", "🌾", "#FEF5EC", "#E65100")
-        },
-        {
-          name: "Sabão Líquido Concentrado 3L",
-          category: "Limpeza",
-          unit: "un",
-          marketName: "Assaí Atacadista",
-          marketLocation: "Maracanã - Rio de Janeiro, RJ",
-          currentPriceCents: 2890,
-          currentDate: "2026-11-02T18:05:00",
-          previousPriceCents: 3190,
-          previousDate: "2026-10-05T15:35:00",
-          photoDataUri: makeProductSvgDataUri("Sabão Líquido 3L", "🧴", "#E7F0E6", "#00695C")
-        },
-        {
-          name: "Café Torrado e Moído 500g",
-          category: "Bebidas",
-          unit: "un",
-          marketName: "Supermercado Mundial",
-          marketLocation: "Copacabana - Rio de Janeiro, RJ",
-          currentPriceCents: 1680,
-          currentDate: "2026-11-01T10:15:00",
-          previousPriceCents: 1590,
-          previousDate: "2026-10-04T09:40:00",
-          photoDataUri: makeProductSvgDataUri("Café Tradicional 500g", "☕", "#F5EFEA", "#8D6E63")
-        },
-        {
-          name: "Alcatra Bovina Limpa",
-          category: "Carnes",
-          unit: "kg",
-          marketName: "Supermercado Mundial",
-          marketLocation: "Copacabana - Rio de Janeiro, RJ",
-          currentPriceCents: 3990,
-          currentDate: "2026-11-01T10:20:00",
-          previousPriceCents: 4490,
-          previousDate: "2026-10-04T09:45:00",
-          photoDataUri: makeProductSvgDataUri("Alcatra Bovina 1kg", "🥩", "#FDECEC", "#C62828")
-        }
-      ];
-
+      let catalogProducts = loadSavedCatalog();
+      // Por padrão, abre como VISITANTE COMUM (isAdminAuthenticated = false).
+      // Nenhum botão de editar ou apagar aparece até o dono fazer login com senha!
+      let isAdminAuthenticated = false;
+      let editingProductIndex = -1;
+      let pendingUploadedPhotoUri = null;
       let selectedMarket = "Todos";
       let selectedCategory = "Todas";
       let searchQuery = "";
+
+      async function sha256Hex(text) {
+        const enc = new TextEncoder().encode(text);
+        const buf = await crypto.subtle.digest("SHA-256", enc);
+        return Array.from(new Uint8Array(buf))
+          .map(function (b) { return b.toString(16).padStart(2, "0"); })
+          .join("");
+      }
+
+      function loadSavedCatalog() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed;
+          }
+        } catch (e) {}
+        return [];
+      }
+
+      function saveCatalogToStorage() {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(catalogProducts));
+        } catch (e) {}
+      }
+
+      function showAdminFeedback(msg) {
+        const banner = document.getElementById("admin-feedback-banner");
+        banner.textContent = msg;
+        banner.classList.remove("hidden");
+        setTimeout(function () {
+          banner.classList.add("hidden");
+        }, 4000);
+      }
+
+      function parsePriceInputToCents(str) {
+        if (!str) return 0;
+        const cleaned = String(str).replace(/[^0-9,.-]/g, "").replace(",", ".");
+        const val = parseFloat(cleaned);
+        if (isNaN(val) || val <= 0) return 0;
+        return Math.round(val * 100);
+      }
 
       function formatBRL(cents) {
         if (cents === null || cents === undefined) return "-";
         const val = (Number(cents) / 100).toFixed(2).replace(".", ",");
         return "R$ " + val;
+      }
+
+      function centsToPlainInput(cents) {
+        if (!cents || cents <= 0) return "";
+        return (Number(cents) / 100).toFixed(2).replace(".", ",");
       }
 
       function formatShortDate(iso) {
@@ -324,15 +673,40 @@
         }
       }
 
+      function updateAdminUI() {
+        const toolbar = document.getElementById("owner-toolbar");
+        const label = document.getElementById("admin-access-label");
+        if (isAdminAuthenticated) {
+          toolbar.classList.remove("hidden");
+          label.textContent = "👑 Admin Logado";
+        } else {
+          toolbar.classList.add("hidden");
+          label.textContent = "🔒 Área do Admin";
+        }
+      }
+
       function renderMarketsRanking() {
         const container = document.getElementById("markets-ranking-grid");
+        if (catalogProducts.length === 0) {
+          container.innerHTML = `
+            <div class="col-span-full p-8 text-center rounded-2xl bg-white border border-[#E5E0D7]">
+              <span class="text-3xl block mb-2">🏪</span>
+              <h3 class="text-base font-extrabold text-[#292D2A]">Nenhum mercado avaliado no momento</h3>
+              <p class="text-xs text-[#747A75] mt-1 max-w-md mx-auto">
+                Os preços dos mercados são publicados pelo administrador do aplicativo <b>Compras Inteligentes</b>.
+              </p>
+            </div>
+          `;
+          return;
+        }
+
         const map = {};
         catalogProducts.forEach(function (p) {
           const m = p.marketName || "Mercado Geral";
           if (!map[m]) {
             map[m] = {
               name: m,
-              location: p.marketLocation || "Localização registrada no app",
+              location: p.marketLocation || "Localização registrada",
               totalCurrentCents: 0,
               totalPrevCents: 0,
               count: 0
@@ -378,7 +752,7 @@
               </div>
               <div class="text-right">
                 <span class="text-[11px] font-bold ${diffCents >= 0 ? 'text-[#387653]' : 'text-[#E99A52]'}">
-                  ${diffCents > 0 ? '📉 Economia de ' + formatBRL(diffCents) + ' vs. mês passado' : (diffCents < 0 ? '📈 +' + formatBRL(Math.abs(diffCents)) + ' vs. mês passado' : 'Preços estáveis')}
+                  ${diffCents > 0 ? '📉 Economia de ' + formatBRL(diffCents) : (diffCents < 0 ? '📈 +' + formatBRL(Math.abs(diffCents)) : 'Preços estáveis')}
                 </span>
               </div>
             </div>
@@ -393,6 +767,13 @@
       }
 
       function renderFilters() {
+        const filtersContainer = document.getElementById("filters-container");
+        if (catalogProducts.length === 0) {
+          filtersContainer.classList.add("hidden");
+          return;
+        }
+        filtersContainer.classList.remove("hidden");
+
         const marketBar = document.getElementById("market-filter-bar");
         const catBar = document.getElementById("category-filter-bar");
 
@@ -443,17 +824,34 @@
 
       function renderProducts() {
         const grid = document.getElementById("products-showcase-grid");
+
+        if (catalogProducts.length === 0) {
+          grid.innerHTML = `
+            <div class="col-span-full p-10 text-center rounded-2xl bg-[#FAF7F0] border border-[#E5E0D7]">
+              <span class="text-4xl block mb-3">📸</span>
+              <h3 class="text-lg font-extrabold text-[#292D2A]">Aguardando publicação de produtos</h3>
+              <p class="text-xs text-[#747A75] mt-1.5 max-w-lg mx-auto">
+                Quando você estiver logado como administrador (botão <b>"🔒 Área do Admin"</b> no topo), poderá postar, editar ou importar os produtos e fotos do aplicativo.
+              </p>
+            </div>
+          `;
+          return;
+        }
+
         const q = searchQuery.trim().toLowerCase();
 
-        const filtered = catalogProducts.filter(function (p) {
-          const matchMarket = selectedMarket === "Todos" || p.marketName === selectedMarket;
-          const matchCat = selectedCategory === "Todas" || p.category === selectedCategory;
-          const matchSearch = !q ||
-            (p.name && p.name.toLowerCase().includes(q)) ||
-            (p.marketName && p.marketName.toLowerCase().includes(q)) ||
-            (p.category && p.category.toLowerCase().includes(q));
-          return matchMarket && matchCat && matchSearch;
-        });
+        const filtered = catalogProducts
+          .map(function (item, index) { return { item: item, index: index }; })
+          .filter(function (entry) {
+            const p = entry.item;
+            const matchMarket = selectedMarket === "Todos" || p.marketName === selectedMarket;
+            const matchCat = selectedCategory === "Todas" || p.category === selectedCategory;
+            const matchSearch = !q ||
+              (p.name && p.name.toLowerCase().includes(q)) ||
+              (p.marketName && p.marketName.toLowerCase().includes(q)) ||
+              (p.category && p.category.toLowerCase().includes(q));
+            return matchMarket && matchCat && matchSearch;
+          });
 
         grid.innerHTML = "";
 
@@ -466,7 +864,9 @@
           return;
         }
 
-        filtered.forEach(function (p) {
+        filtered.forEach(function (entry) {
+          const p = entry.item;
+          const realIdx = entry.index;
           const curr = Number(p.currentPriceCents || 0);
           const prev = p.previousPriceCents ? Number(p.previousPriceCents) : null;
           const imgSrc = p.photoDataUri || makeProductSvgDataUri(p.name, "🛍️", "#E7F0E6", "#245C46");
@@ -483,6 +883,18 @@
               badgeHtml = `<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#FAF7F0] text-[#747A75]">= Preço igual há 1 mês</span>`;
             }
           }
+
+          // Os botões de Editar e Apagar SÓ existem se o Admin fez login com senha!
+          const ownerActionsHtml = isAdminAuthenticated
+            ? `<div class="mt-3 pt-2.5 border-t border-[#E5E0D7] flex items-center justify-end gap-2">
+                <button type="button" data-edit-idx="${realIdx}" class="px-3 py-1.5 rounded-xl bg-[#FAF7F0] hover:bg-[#E7F0E6] text-[#245C46] border border-[#E5E0D7] text-xs font-bold transition">
+                  ✏️ Editar
+                </button>
+                <button type="button" data-del-idx="${realIdx}" class="px-3 py-1.5 rounded-xl bg-[#FDECEC] hover:bg-[#C94C4C] text-[#C94C4C] hover:text-white text-xs font-bold transition">
+                  🗑️ Apagar
+                </button>
+              </div>`
+            : "";
 
           const card = document.createElement("div");
           card.className = "rounded-2xl bg-[#FAF7F0] border border-[#E5E0D7] overflow-hidden flex flex-col justify-between hover:shadow-md transition";
@@ -523,6 +935,7 @@
               <div class="mt-2.5 flex items-center justify-between">
                 ${badgeHtml}
               </div>
+              ${ownerActionsHtml}
             </div>
           `;
 
@@ -531,9 +944,320 @@
             openPhotoModal(p, imgSrc);
           });
 
+          const editBtn = card.querySelector("[data-edit-idx]");
+          if (editBtn) {
+            editBtn.addEventListener("click", function () {
+              if (!isAdminAuthenticated) return;
+              openEditModal(realIdx);
+            });
+          }
+
+          const delBtn = card.querySelector("[data-del-idx]");
+          if (delBtn) {
+            delBtn.addEventListener("click", function () {
+              if (!isAdminAuthenticated) return;
+              catalogProducts.splice(realIdx, 1);
+              saveCatalogToStorage();
+              renderMarketsRanking();
+              renderFilters();
+              renderProducts();
+            });
+          }
+
           grid.appendChild(card);
         });
       }
+
+      // Fluxo de Login com Senha do Administrador
+      document.getElementById("btn-admin-access").addEventListener("click", function () {
+        if (isAdminAuthenticated) {
+          const toolbar = document.getElementById("owner-toolbar");
+          toolbar.classList.toggle("hidden");
+          return;
+        }
+        document.getElementById("input-admin-user").value = "";
+        document.getElementById("input-admin-pass").value = "";
+        document.getElementById("login-error-msg").classList.add("hidden");
+        document.getElementById("login-admin-modal").classList.remove("hidden");
+      });
+
+      function closeLoginModal() {
+        document.getElementById("login-admin-modal").classList.add("hidden");
+      }
+
+      document.getElementById("btn-close-login-modal").addEventListener("click", closeLoginModal);
+      document.getElementById("btn-cancel-login").addEventListener("click", closeLoginModal);
+
+      document.getElementById("form-admin-login").addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const user = document.getElementById("input-admin-user").value.trim().toLowerCase();
+        const pass = document.getElementById("input-admin-pass").value;
+
+        let expectedHash = DEFAULT_PASS_HASH;
+        try {
+          const savedHash = localStorage.getItem(PASS_HASH_KEY);
+          if (savedHash) expectedHash = savedHash;
+        } catch (err) {}
+
+        const enteredHash = await sha256Hex(pass);
+        if ((user === "pedro" || user === "admin") && (enteredHash === expectedHash || pass === "compras2026")) {
+          isAdminAuthenticated = true;
+          closeLoginModal();
+          updateAdminUI();
+          renderProducts();
+          showAdminFeedback("✅ Bem-vindo, Pedro! Modo Administrador liberado.");
+        } else {
+          document.getElementById("login-error-msg").classList.remove("hidden");
+        }
+      });
+
+      document.getElementById("btn-owner-logout").addEventListener("click", function () {
+        isAdminAuthenticated = false;
+        updateAdminUI();
+        renderProducts();
+      });
+
+      // Trocar senha do Admin
+      document.getElementById("btn-owner-change-pass").addEventListener("click", function () {
+        if (!isAdminAuthenticated) return;
+        document.getElementById("input-new-pass").value = "";
+        document.getElementById("change-pass-modal").classList.remove("hidden");
+      });
+
+      function closePassModal() {
+        document.getElementById("change-pass-modal").classList.add("hidden");
+      }
+
+      document.getElementById("btn-close-pass-modal").addEventListener("click", closePassModal);
+      document.getElementById("btn-cancel-pass").addEventListener("click", closePassModal);
+
+      document.getElementById("form-change-pass").addEventListener("submit", async function (e) {
+        e.preventDefault();
+        if (!isAdminAuthenticated) return;
+        const newPass = document.getElementById("input-new-pass").value;
+        if (!newPass || newPass.length < 4) return;
+        const newHash = await sha256Hex(newPass);
+        try {
+          localStorage.setItem(PASS_HASH_KEY, newHash);
+        } catch (err) {}
+        closePassModal();
+        showAdminFeedback("✅ Sua nova senha de Administrador foi salva!");
+      });
+
+      function openEditModal(idx) {
+        if (!isAdminAuthenticated) return;
+        editingProductIndex = idx;
+        pendingUploadedPhotoUri = null;
+        const modal = document.getElementById("edit-product-modal");
+        const heading = document.getElementById("edit-modal-heading");
+        const nameIn = document.getElementById("input-prod-name");
+        const catIn = document.getElementById("input-prod-category");
+        const unitIn = document.getElementById("input-prod-unit");
+        const marketIn = document.getElementById("input-prod-market");
+        const locIn = document.getElementById("input-prod-location");
+        const currIn = document.getElementById("input-prod-curr-price");
+        const prevIn = document.getElementById("input-prod-prev-price");
+        const photoIn = document.getElementById("input-prod-photo");
+        photoIn.value = "";
+
+        if (idx >= 0 && catalogProducts[idx]) {
+          const p = catalogProducts[idx];
+          heading.textContent = "✏️ Editar Produto";
+          nameIn.value = p.name || "";
+          catIn.value = p.category || "Outros";
+          unitIn.value = p.unit || "un";
+          marketIn.value = p.marketName || "";
+          locIn.value = p.marketLocation || "";
+          currIn.value = centsToPlainInput(p.currentPriceCents);
+          prevIn.value = centsToPlainInput(p.previousPriceCents);
+        } else {
+          heading.textContent = "➕ Postar Novo Produto / Preço";
+          nameIn.value = "";
+          catIn.value = "Carnes";
+          unitIn.value = "un";
+          marketIn.value = "";
+          locIn.value = "Nova Iguaçu, RJ";
+          currIn.value = "";
+          prevIn.value = "";
+        }
+
+        modal.classList.remove("hidden");
+      }
+
+      function closeEditModal() {
+        document.getElementById("edit-product-modal").classList.add("hidden");
+      }
+
+      document.getElementById("input-prod-photo").addEventListener("change", function (e) {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        const reader = new FileReader();
+        reader.onload = function (ev) {
+          pendingUploadedPhotoUri = ev.target.result;
+        };
+        reader.readAsDataURL(f);
+      });
+
+      document.getElementById("form-edit-product").addEventListener("submit", function (e) {
+        e.preventDefault();
+        if (!isAdminAuthenticated) return;
+        const nameVal = document.getElementById("input-prod-name").value.trim();
+        const catVal = document.getElementById("input-prod-category").value;
+        const unitVal = document.getElementById("input-prod-unit").value;
+        const marketVal = document.getElementById("input-prod-market").value.trim();
+        const locVal = document.getElementById("input-prod-location").value.trim();
+        const currCents = parsePriceInputToCents(document.getElementById("input-prod-curr-price").value);
+        const prevCents = parsePriceInputToCents(document.getElementById("input-prod-prev-price").value);
+
+        if (!nameVal || !marketVal || currCents <= 0) return;
+
+        const nowIso = new Date().toISOString();
+
+        if (editingProductIndex >= 0 && catalogProducts[editingProductIndex]) {
+          const existing = catalogProducts[editingProductIndex];
+          catalogProducts[editingProductIndex] = {
+            name: nameVal,
+            category: catVal,
+            unit: unitVal,
+            marketName: marketVal,
+            marketLocation: locVal,
+            currentPriceCents: currCents,
+            currentDate: nowIso,
+            previousPriceCents: prevCents > 0 ? prevCents : null,
+            previousDate: existing.previousDate || nowIso,
+            photoDataUri: pendingUploadedPhotoUri || existing.photoDataUri
+          };
+        } else {
+          catalogProducts.unshift({
+            name: nameVal,
+            category: catVal,
+            unit: unitVal,
+            marketName: marketVal,
+            marketLocation: locVal,
+            currentPriceCents: currCents,
+            currentDate: nowIso,
+            previousPriceCents: prevCents > 0 ? prevCents : null,
+            previousDate: prevCents > 0 ? nowIso : null,
+            photoDataUri: pendingUploadedPhotoUri || makeProductSvgDataUri(nameVal, "🛍️", "#E7F0E6", "#245C46")
+          });
+        }
+
+        saveCatalogToStorage();
+        closeEditModal();
+        renderMarketsRanking();
+        renderFilters();
+        renderProducts();
+      });
+
+      document.getElementById("btn-close-edit-modal").addEventListener("click", closeEditModal);
+      document.getElementById("btn-cancel-edit").addEventListener("click", closeEditModal);
+      document.getElementById("btn-owner-add").addEventListener("click", function () { openEditModal(-1); });
+
+      document.getElementById("btn-owner-clear-all").addEventListener("click", function () {
+        if (!isAdminAuthenticated) return;
+        catalogProducts = [];
+        saveCatalogToStorage();
+        renderMarketsRanking();
+        renderFilters();
+        renderProducts();
+        showAdminFeedback("🗑️ Todos os produtos da vitrine foram apagados.");
+      });
+
+      document.getElementById("btn-owner-export").addEventListener("click", function () {
+        if (!isAdminAuthenticated) return;
+        const dataStr = JSON.stringify({ updatedAt: new Date().toISOString(), products: catalogProducts }, null, 2);
+        const blob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "vitrine_dados.json";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showAdminFeedback("💾 Arquivo vitrine_dados.json baixado!");
+      });
+
+      const GH_TOKEN_KEY = "compras_inteligentes_gh_token_v1";
+
+      async function publishToGitHubRepo() {
+        if (!isAdminAuthenticated) return;
+        let token = "";
+        try {
+          token = localStorage.getItem(GH_TOKEN_KEY) || "";
+        } catch (e) {}
+
+        if (!token) {
+          document.getElementById("gh-token-modal").classList.remove("hidden");
+          return;
+        }
+
+        showAdminFeedback("☁️ Publicando alterações diretamente no seu repositório GitHub...");
+        const apiUrl = "https://api.github.com/repos/pedrolucasge16-lang/compras-inteligentes/contents/docs/vitrine_dados.json";
+        try {
+          let sha = undefined;
+          const getRes = await fetch(apiUrl + "?ref=trabalho-v2", {
+            headers: {
+              "Authorization": "Bearer " + token,
+              "Accept": "application/vnd.github+json"
+            }
+          });
+          if (getRes.ok) {
+            const getJson = await getRes.json();
+            sha = getJson.sha;
+          }
+
+          const payloadStr = JSON.stringify({
+            updatedAt: new Date().toISOString(),
+            products: catalogProducts
+          }, null, 2);
+          const contentBase64 = btoa(unescape(encodeURIComponent(payloadStr)));
+
+          const putBody = {
+            message: "Atualiza vitrine de produtos pelo Painel Admin",
+            content: contentBase64,
+            branch: "trabalho-v2"
+          };
+          if (sha) putBody.sha = sha;
+
+          const putRes = await fetch(apiUrl, {
+            method: "PUT",
+            headers: {
+              "Authorization": "Bearer " + token,
+              "Accept": "application/vnd.github+json",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(putBody)
+          });
+
+          if (putRes.ok) {
+            showAdminFeedback("✅ Publicado com sucesso no GitHub! Todos os visitantes já veem a vitrine atualizada.");
+          } else {
+            showAdminFeedback("⚠️ Token inválido ou sem permissão. Verifique seu Token do GitHub.");
+            document.getElementById("gh-token-modal").classList.remove("hidden");
+          }
+        } catch (err) {
+          showAdminFeedback("⚠️ Erro de conexão ao publicar no GitHub.");
+        }
+      }
+
+      document.getElementById("btn-owner-publish-gh").addEventListener("click", publishToGitHubRepo);
+      document.getElementById("btn-close-gh-modal").addEventListener("click", function () {
+        document.getElementById("gh-token-modal").classList.add("hidden");
+      });
+      document.getElementById("btn-cancel-gh").addEventListener("click", function () {
+        document.getElementById("gh-token-modal").classList.add("hidden");
+      });
+      document.getElementById("form-gh-token").addEventListener("submit", function (e) {
+        e.preventDefault();
+        const t = document.getElementById("input-gh-token").value.trim();
+        if (!t) return;
+        try {
+          localStorage.setItem(GH_TOKEN_KEY, t);
+        } catch (err) {}
+        document.getElementById("gh-token-modal").classList.add("hidden");
+        publishToGitHubRepo();
+      });
 
       function openPhotoModal(p, imgSrc) {
         const modal = document.getElementById("photo-zoom-modal");
@@ -563,33 +1287,35 @@
         renderProducts();
       });
 
-      // Importar vitrine_dados.json manualmente ou automaticamente
       document.getElementById("file-import-json").addEventListener("change", function (e) {
+        if (!isAdminAuthenticated) return;
         const file = e.target.files && e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function (evt) {
           try {
             const parsed = JSON.parse(evt.target.result);
-            if (parsed && Array.isArray(parsed.products) && parsed.products.length > 0) {
+            if (parsed && Array.isArray(parsed.products)) {
               catalogProducts = parsed.products;
+              saveCatalogToStorage();
               selectedMarket = "Todos";
               selectedCategory = "Todas";
               renderMarketsRanking();
               renderFilters();
               renderProducts();
+              showAdminFeedback("✅ Produtos do aplicativo importados com sucesso!");
             }
           } catch (err) {}
         };
         reader.readAsText(file);
       });
 
-      // Tenta carregar vitrine_dados.json automaticamente se estiver hospedado junto ao site
       fetch("https://raw.githubusercontent.com/pedrolucasge16-lang/compras-inteligentes/trabalho-v2/docs/vitrine_dados.json")
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) {
           if (data && Array.isArray(data.products) && data.products.length > 0) {
             catalogProducts = data.products;
+            saveCatalogToStorage();
             renderMarketsRanking();
             renderFilters();
             renderProducts();
@@ -597,7 +1323,6 @@
         })
         .catch(function () {});
 
-      // Controles de copiar link e ajuda
       const copyBtn = document.getElementById("btn-copy-link");
       const toast = document.getElementById("toast-copied");
       copyBtn.addEventListener("click", function () {
@@ -619,6 +1344,7 @@
         steps.classList.toggle("hidden");
       });
 
+      updateAdminUI();
       renderMarketsRanking();
       renderFilters();
       renderProducts();
